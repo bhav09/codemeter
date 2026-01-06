@@ -1,0 +1,32 @@
+{
+  "name": "codemeter",
+  "version": "0.1.0",
+  "description": "IDE-agnostic extension for AI coding agent cost tracking",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bhav09/codemeter"
+  },
+  "workspaces": [
+    "packages/*",
+    "packages/connectors/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "npm run test --workspaces",
+    "lint": "eslint packages/*/src/**/*.ts",
+    "clean": "npm run clean --workspaces && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

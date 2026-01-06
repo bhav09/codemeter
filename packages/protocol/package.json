@@ -1,0 +1,14 @@
+{
+  "name": "@codemeter/protocol",
+  "version": "0.1.0",
+  "description": "Shared message schemas for CodeMeter",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "CodeMeter Helper",
+  "version": "0.1.0",
+  "description": "Pairs Cursor session cookie to CodeMeter IDE extension without copy/paste.",
+  "permissions": ["cookies", "storage", "activeTab"],
+  "host_permissions": ["https://cursor.com/*", "http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["dist/contentScript.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
+
+

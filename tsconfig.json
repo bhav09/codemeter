@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/protocol" },
+    { "path": "./packages/database" },
+    { "path": "./packages/connectors/cursor-dashboard" },
+    { "path": "./packages/connectors/cursor-admin" },
+    { "path": "./packages/ide-vscode" },
+    { "path": "./packages/chrome-helper" }
+  ]
+}
+
+

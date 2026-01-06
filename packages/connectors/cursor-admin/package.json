@@ -1,0 +1,21 @@
+{
+  "name": "@codemeter/cursor-admin",
+  "version": "0.1.0",
+  "description": "Cursor Admin API (teams/enterprise) connector for CodeMeter",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@codemeter/core": "^0.1.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+
+

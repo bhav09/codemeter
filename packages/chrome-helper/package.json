@@ -1,0 +1,16 @@
+{
+  "name": "@codemeter/chrome-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome helper extension for CodeMeter pairing (MV3)",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.32",
+    "typescript": "^5.0.0"
+  }
+}
+
+

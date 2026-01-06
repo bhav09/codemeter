@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# VS Code extension packaging
+*.vsix
+
+# Local environment/secrets
+.env
+.env.*
+.vscode-test/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Project-specific
+.codemeter/
+packages/*/dist/
