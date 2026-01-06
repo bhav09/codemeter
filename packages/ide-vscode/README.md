@@ -2,8 +2,6 @@
 
 **CodeMeter** provides **project-level cost tracking** for AI coding agents. It attributes your Cursor usage to specific projects, giving you clear insights into your AI spending across different workspaces.
 
-![Dashboard](assets/codemeter.png)
-
 ## Features
 
 - **Project-Level Costs**: Automatically tracks which project you are working on and attributes costs accordingly.
@@ -25,4 +23,5 @@
 For issues or feature requests, visit our [GitHub Repository](https://github.com/bhavishya-dev/codemeter).
 
 ---
+
 *Note: CodeMeter runs locally on your machine and communicates directly with Cursor's APIs. Your tokens are stored securely in VS Code's SecretStorage.*
