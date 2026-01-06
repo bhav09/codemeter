@@ -13,48 +13,58 @@ let pollTimer: NodeJS.Timeout | null = null;
 let dashboardProvider: DashboardViewProvider | null = null;
 
 export async function activate(context: vscode.ExtensionContext) {
+  // Register the webview view provider FIRST, before any async operations
+  // This ensures VS Code can resolve the view immediately when needed
+  try {
+    dashboardProvider = new DashboardViewProvider(context, {
+      refresh: async (mode) => {
+        const now = Date.now();
+        const startMs = now - 24 * 60 * 60 * 1000;
+        await runSync(context, { mode, startMs, endMs: now });
+        await checkBudgetsAndNotify();
+        await dashboardProvider?.refresh();
+      },
+      connectCursor: async () => {
+        const server = await startPairingServer(context);
+        context.subscriptions.push({ dispose: () => void server.dispose() });
+        const url = `http://127.0.0.1:${server.port}/pair`;
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+        try {
+          await server.awaitToken();
+        } finally {
+          await server.dispose();
+        }
+      },
+      disconnectCursor: async () => {
+        await context.secrets.delete('cursor.sessionToken');
+      },
+      setBudget: async () => {
+        await setBudgetForCurrentProject();
+      },
+      reviewAttribution: async () => {
+        await reviewAttribution();
+      }
+    });
+
+    // Register provider synchronously before any async operations
+    // This must happen early so VS Code can resolve the view when needed
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider, {
+        webviewOptions: { retainContextWhenHidden: true }
+      })
+    );
+  } catch (error) {
+    console.error('CodeMeter: Failed to register dashboard view provider:', error);
+    // Re-throw to prevent silent failures
+    throw error;
+  }
+
   const enabled = vscode.workspace.getConfiguration('codemeter').get<boolean>('enableTracking', true);
   if (enabled) {
     tracker = new ProjectSessionTracker();
     tracker.start();
     context.subscriptions.push(tracker);
   }
-
-  dashboardProvider = new DashboardViewProvider(context, {
-    refresh: async (mode) => {
-      const now = Date.now();
-      const startMs = now - 24 * 60 * 60 * 1000;
-      await runSync(context, { mode, startMs, endMs: now });
-      await checkBudgetsAndNotify();
-      await dashboardProvider?.refresh();
-    },
-    connectCursor: async () => {
-      const server = await startPairingServer(context);
-      context.subscriptions.push({ dispose: () => void server.dispose() });
-      const url = `http://127.0.0.1:${server.port}/pair`;
-      await vscode.env.openExternal(vscode.Uri.parse(url));
-      try {
-        await server.awaitToken();
-      } finally {
-        await server.dispose();
-      }
-    },
-    disconnectCursor: async () => {
-      await context.secrets.delete('cursor.sessionToken');
-    },
-    setBudget: async () => {
-      await setBudgetForCurrentProject();
-    },
-    reviewAttribution: async () => {
-      await reviewAttribution();
-    }
-  });
-
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider, {
-      webviewOptions: { retainContextWhenHidden: true }
-    })
-  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('codemeter.showDashboard', async () => {

@@ -72,14 +72,9 @@
     "views": {
       "codemeter": [
         {
+          "type": "webview",
           "id": "codemeter.dashboard",
           "name": "Dashboard"
-        }
-      ],
-      "explorer": [
-        {
-          "id": "codemeterProjects",
-          "name": "Project Costs"
         }
       ]
     },
