@@ -7,6 +7,7 @@ dist/
 
 # VS Code extension packaging
 *.vsix
+!/codemeter-*.vsix
 
 # Local environment/secrets
 .env

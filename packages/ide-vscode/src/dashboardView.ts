@@ -17,6 +17,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private selectedProjectKey: string | null = null;
   private connectorMode: 'cursor-dashboard' | 'cursor-admin';
+  private lastUiError: string | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -79,30 +80,53 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     const weekStart = now - 7 * 24 * 60 * 60 * 1000;
     const monthStart = startOfMonthMs(now);
 
-    const projects = new ProjectRepository().getAll();
-    const analytics = new AnalyticsRepository();
+    // Fail-soft: the dashboard should still render even if storage reads throw (permissions/corruption).
+    // We surface a small non-PII error string to help debugging, but never block rendering.
+    let projects: any[] = [];
+    let byProjectToday: any[] = [];
+    let byProjectWeek: any[] = [];
+    let byProjectMonth: any[] = [];
+    let unattributedWeek: any = { totalCents: 0, eventCount: 0 };
+    let conflictsWeek: any = { totalCents: 0, eventCount: 0 };
+    let syncState: any = null;
+    let selectedMetricsWeek: any = null;
+    let selectedHeatmapWeek: any = null;
 
-    const byProjectToday = analytics.getCostTotalsByProject(dayStart, now);
-    const byProjectWeek = analytics.getCostTotalsByProject(weekStart, now);
-    const byProjectMonth = analytics.getCostTotalsByProject(monthStart, now);
-    const unattributedWeek = analytics.getUnattributedSummary(weekStart, now);
-    const conflictsWeek = analytics.getConflictSummary(weekStart, now);
+    try {
+      projects = new ProjectRepository().getAll();
+      const analytics = new AnalyticsRepository();
 
-    const syncRepo = new SyncStateRepository();
-    const syncState = syncRepo.get(this.connectorMode === 'cursor-admin' ? 'cursor-admin' : 'cursor-dashboard');
+      byProjectToday = analytics.getCostTotalsByProject(dayStart, now);
+      byProjectWeek = analytics.getCostTotalsByProject(weekStart, now);
+      byProjectMonth = analytics.getCostTotalsByProject(monthStart, now);
+      unattributedWeek = analytics.getUnattributedSummary(weekStart, now);
+      conflictsWeek = analytics.getConflictSummary(weekStart, now);
+
+      const syncRepo = new SyncStateRepository();
+      syncState = syncRepo.get(this.connectorMode === 'cursor-admin' ? 'cursor-admin' : 'cursor-dashboard');
+
+      this.lastUiError = null;
+    } catch (e: any) {
+      this.lastUiError = String(e?.message || e);
+    }
 
     const defaultProjectKey =
       this.selectedProjectKey ??
       projects[0]?.projectKey ??
-      (byProjectWeek.find(r => r.projectKey !== 'unattributed')?.projectKey ?? null);
+      (byProjectWeek.find((r: any) => r.projectKey !== 'unattributed')?.projectKey ?? null);
     this.selectedProjectKey = defaultProjectKey;
 
-    const selectedMetricsWeek = defaultProjectKey
-      ? analytics.getProjectMetrics(defaultProjectKey, weekStart, now)
-      : null;
-    const selectedHeatmapWeek = defaultProjectKey
-      ? analytics.getHourlyHeatmap(defaultProjectKey, weekStart, now)
-      : null;
+    try {
+      if (defaultProjectKey) {
+        const analytics = new AnalyticsRepository();
+        selectedMetricsWeek = analytics.getProjectMetrics(defaultProjectKey, weekStart, now);
+        selectedHeatmapWeek = analytics.getHourlyHeatmap(defaultProjectKey, weekStart, now);
+      }
+    } catch (e: any) {
+      this.lastUiError = this.lastUiError ?? String(e?.message || e);
+      selectedMetricsWeek = null;
+      selectedHeatmapWeek = null;
+    }
 
     const sessionTokenSet = Boolean(await this.context.secrets.get('cursor.sessionToken'));
 
@@ -122,7 +146,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         today: byProjectToday,
         week: byProjectWeek,
         month: byProjectMonth
-      }
+      },
+      uiError: this.lastUiError
     });
   }
 
@@ -290,6 +315,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         renderConflicts(msg.conflictsWeek);
         renderSyncState(msg.syncState);
         renderHeatmap(msg.selectedHeatmapWeek);
+        if (msg.uiError) {
+          // Keep it subtle—dashboard should be usable even if reads fail.
+          $('projectStats').textContent = ( $('projectStats').textContent ? ($('projectStats').textContent + ' · ') : '' ) + 'storage: error';
+        }
       });
 
       $('refresh').onclick = () => vscode.postMessage({ type: 'refresh' });

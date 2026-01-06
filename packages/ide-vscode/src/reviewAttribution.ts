@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AttributionRecord, Project } from '@codemeter/core';
+import { AttributionRecord } from '@codemeter/core';
 import { AttributionRepository, EventRepository, ProjectRepository } from '@codemeter/database';
 
 export async function reviewAttribution(): Promise<void> {

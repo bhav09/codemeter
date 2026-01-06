@@ -6,7 +6,7 @@ import { runSync } from './sync';
 import { checkBudgetsAndNotify, setBudgetForCurrentProject } from './budgets';
 import { reviewAttribution } from './reviewAttribution';
 import { DashboardViewProvider } from './dashboardView';
-import { MaintenanceRepository } from '@codemeter/database';
+import { MaintenanceRepository, SyncStateRepository } from '@codemeter/database';
 
 let tracker: ProjectSessionTracker | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
@@ -128,6 +128,33 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(status);
 
   const pollMinutes = Math.max(60, vscode.workspace.getConfiguration('codemeter').get<number>('pollInterval', 60));
+
+  // Kick off an initial sync shortly after activation so users see usage without waiting an hour.
+  // Respect the configured poll interval and rely on SyncStateRepository high-water mark for safety.
+  setTimeout(async () => {
+    try {
+      const mode = (context.globalState.get('connectorMode') as any) || 'cursor-dashboard';
+      const tokenOk =
+        mode === 'cursor-admin'
+          ? Boolean(await context.secrets.get('cursor.adminApiKey'))
+          : Boolean(await context.secrets.get('cursor.sessionToken'));
+      if (!tokenOk) return;
+
+      const source = mode === 'cursor-admin' ? 'cursor-admin' : 'cursor-dashboard';
+      const state = new SyncStateRepository().get(source as any);
+      const lastSyncAt = state?.lastSyncAtMs ?? 0;
+      if (lastSyncAt && Date.now() - lastSyncAt < pollMinutes * 60_000) return;
+
+      const now = Date.now();
+      const startMs = now - 60 * 60 * 1000;
+      await runSync(context, { mode, startMs, endMs: now });
+      await checkBudgetsAndNotify();
+      await dashboardProvider?.refresh();
+    } catch {
+      // best-effort; user can always hit "Refresh usage"
+    }
+  }, 4_000);
+
   pollTimer = setInterval(async () => {
     try {
       const now = Date.now();

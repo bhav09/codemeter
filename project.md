@@ -135,6 +135,73 @@ Use the provided CodeMeter logo for the extension and prepare the project to pub
 ### 8) Rollout plan
 - Publish to Open VSX first (Antigravity/Cursor ecosystem), then VS Code Marketplace.
 
+---
+
+## ETB Addendum — Fix dashboard view “no data provider registered” + show empty dashboard when no data
+
+### 1) User goal (1 sentence)
+Fix CodeMeter in VS Code/Cursor so the **Activity Bar Dashboard always renders** (even with zero data) and the extension **tracks project activity** so attribution has context.
+
+### 2) Mode
+[MVP] (Architect) — external users, but this is a **packaging/activation reliability** fix; optimize for the smallest safe change that restores functionality.
+
+### 3) Code grounding (required file reads)
+**Files read (this session):**
+- `packages/ide-vscode/package.json` (view contributions, activation events, packaging scripts)
+- `packages/ide-vscode/src/extension.ts` (activation + provider registration)
+- `packages/ide-vscode/src/dashboardView.ts` (webview view provider + empty-state rendering)
+- `packages/ide-vscode/src/dashboardWebview.ts` (command-based dashboard panel)
+- `packages/ide-vscode/src/sessionTracker.ts` (project session tracking hooks)
+- `packages/ide-vscode/src/projectIdentity.ts` (project key computation)
+- `packages/ide-vscode/src/sync.ts` (sync + attribution path)
+- `packages/database/src/schema.ts` / `packages/database/src/driver.ts` / `packages/database/src/repositories.ts` (local JSONL store + analytics queries)
+- `README.md` / `packages/ide-vscode/README.md` (user workflow and expectations)
+
+**Files expected to modify (proposal):**
+- `packages/ide-vscode/package.json` (fix build/package so the extension actually loads in production installs)
+- `packages/ide-vscode/src/dashboardView.ts` (defensive empty-state: dashboard should render even if DB read fails)
+- `packages/ide-vscode/src/sessionTracker.ts` (ensure project “activity” updates keep projects visible even before usage sync)
+
+### 4) Dependency check
+**No new runtime dependencies planned.** (Bundling only adds a *dev* dependency.)
+
+Key observation: this repo uses **npm workspaces**, which installs internal packages as symlinks (e.g. `node_modules/@codemeter/database -> ../../packages/database`).
+- **Likely impact**: `vsce package` rejects these symlinks with “invalid relative path …”, so packaging fails or produces an extension that can’t resolve modules at runtime—leading to the VS Code/Cursor error: “There is no data provider registered that can provide view data.”
+
+**Alternatives considered:**
+- **Bundle the extension** (esbuild/webpack) — **chosen**: avoids workspace symlink issues and makes activation reliable.
+- **Include dependencies in VSIX** (remove `--no-dependencies`) — not viable with workspaces symlinks; `vsce` rejects them.
+
+### 5) Safety audit (MVP)
+- **Reliability**: dashboard should not crash or show a hard error when storage is empty/unavailable; show an empty dashboard with a small “error” indicator instead.
+- **Security**: do not log tokens / secrets; no new telemetry that includes PII.
+- **Backwards compatibility**: avoid schema changes; keep existing JSONL stores working as-is.
+
+### 6) Step-by-step plan (must follow this order)
+1. **Schema/Types**: no schema changes; confirm dashboard can represent “empty” state with current message shape.
+2. **Failing repro step**: package/install the extension and open the CodeMeter activity bar; observe the “no data provider registered” screen.
+3. **Implementation logic**:
+   - Fix packaging so the extension can load/activate reliably (likely removing `--no-dependencies` and ensuring build emits `dist/extension.js` consistently).
+   - Harden dashboard state posting so it renders a blank dashboard when there are zero rows or when reads fail.
+   - Make session tracker update project `lastActiveAt` on user activity so the dashboard can show the project list even before any Cursor usage is synced.
+4. **Telemetry/logs**: add minimal, non-PII logging around activation failure paths (start/success/failure) to help debug future “blank view” reports.
+5. **Build verification**: run the repo build and the VSIX packaging script that exists in the repo.
+
+### 7) Acceptance criteria (definition of done)
+- **Dashboard renders** in VS Code and Cursor without the “no data provider registered” screen.
+- With a brand new install and no stored events, the dashboard shows a **blank/empty state** (not an error screen).
+- Editing in a workspace results in a project appearing in the dashboard (activity is tracked even before usage sync).
+- Packaging/build produces a VSIX that loads without missing-module errors.
+
+### 8) Rollout plan (MVP recommended)
+- Release as a **patch version**.
+- Validate quickly on both VS Code and Cursor:
+  - open Activity Bar view
+  - ensure empty state renders
+  - edit a file and confirm a project appears
+  - optionally run “Refresh usage” (should still work if auth is configured)
+- If anything regresses, rollback by republishing the prior VSIX (no data migration required).
+
 ## Architecture Overview
 
 ```
@@ -217,3 +284,13 @@ Use the provided CodeMeter logo for the extension and prepare the project to pub
 ### 2026-01-06 (Phase 3)
 - **What changed**: Wired repository metadata to `https://github.com/bhav09/codemeter` and prepared publishing docs; logo is now provided as a PNG and used for both the extension icon and Activity Bar container.
 - **What’s next**: After you push code to GitHub, publish to Open VSX and VS Code Marketplace using your tokens.
+
+### 2026-01-06 (Bugfix investigation)
+- **What changed**: Investigated the VS Code/Cursor dashboard error “There is no data provider registered that can provide view data.”
+- **What I learned**: The view is contributed as a `webview` (`codemeter.dashboard`) and the provider registration exists, so the error most likely happens when the extension fails to load/activate. With npm workspaces, `vsce` can also reject symlinked dependencies during packaging, which breaks activation.
+- **What’s next**: Bundle the extension for stable packaging, and ship defensive empty-state + “show usage quickly” behavior (safe initial sync).
+
+### 2026-01-06 (Bugfix implementation)
+- **What changed**: Bundled the VS Code extension (esbuild) so packaging works with npm workspaces; dashboard now fail-soft renders even with no data; session tracking updates project activity so projects show immediately; and a best-effort initial sync runs shortly after startup when credentials exist (respecting poll interval).
+- **What you learned**: Workspaces + `vsce` packaging require bundling to avoid symlink/module-resolution issues.
+- **What’s next**: Publish the new VSIX, then validate in both VS Code and Cursor: open dashboard, edit a file (project appears), and confirm usage appears after initial sync/refresh.

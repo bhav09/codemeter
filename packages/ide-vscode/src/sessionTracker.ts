@@ -20,6 +20,8 @@ export class ProjectSessionTracker implements vscode.Disposable {
   private currentProjectKey: string | null = null;
   private currentWorkspaceFolders: string[] = [];
   private currentWorkspacePath: string | null = null;
+  private currentProject: Project | null = null;
+  private lastProjectTouchAt = 0;
   private idle = false;
   private focused = true;
   private lastActivityAt = Date.now();
@@ -44,7 +46,7 @@ export class ProjectSessionTracker implements vscode.Disposable {
         this.focused = state.focused;
         this.setActivity();
         if (prevFocused !== this.focused) {
-          this.rotateSession('focus changed');
+          this.rotateSession();
         } else {
           this.updateSessionFlags();
         }
@@ -67,7 +69,7 @@ export class ProjectSessionTracker implements vscode.Disposable {
       const nextIdle = now - this.lastActivityAt >= this.idleMs;
       if (nextIdle !== this.idle) {
         this.idle = nextIdle;
-        this.rotateSession('idle toggled');
+        this.rotateSession();
       }
     }, 5_000);
   }
@@ -84,6 +86,25 @@ export class ProjectSessionTracker implements vscode.Disposable {
   private setActivity(): void {
     this.lastActivityAt = Date.now();
     this.idle = false;
+    this.touchProjectActivity();
+  }
+
+  /**
+   * Update project "lastActiveAt" as the user edits, so the dashboard can show the project
+   * immediately (even before any Cursor usage sync exists). Debounced to avoid hot-loop writes.
+   */
+  private touchProjectActivity(): void {
+    if (!this.currentProject) return;
+    const now = Date.now();
+    const TOUCH_DEBOUNCE_MS = 30_000;
+    if (now - this.lastProjectTouchAt < TOUCH_DEBOUNCE_MS) return;
+    this.lastProjectTouchAt = now;
+    try {
+      this.currentProject = { ...this.currentProject, lastActiveAt: now };
+      this.projects.create(this.currentProject);
+    } catch {
+      // best-effort
+    }
   }
 
   private ensureSessionForCurrentWorkspace(forceNew = false): void {
@@ -109,6 +130,8 @@ export class ProjectSessionTracker implements vscode.Disposable {
       lastActiveAt: Date.now()
     };
     this.projects.create(project);
+    this.currentProject = project;
+    this.lastProjectTouchAt = Date.now();
 
     // Create new session
     const session: ProjectSession = {
@@ -140,6 +163,7 @@ export class ProjectSessionTracker implements vscode.Disposable {
     this.currentProjectKey = null;
     this.currentWorkspaceFolders = [];
     this.currentWorkspacePath = null;
+    this.currentProject = null;
   }
 
   private updateSessionFlags(): void {
@@ -155,7 +179,7 @@ export class ProjectSessionTracker implements vscode.Disposable {
    * Start a new session segment when focus/idle changes, keeping the same project attribution.
    * This improves time attribution accuracy substantially vs mutating flags on a single long session.
    */
-  private rotateSession(_reason: string): void {
+  private rotateSession(): void {
     if (!this.currentProjectKey || !this.currentSessionId || !this.currentWorkspacePath) {
       // If we don't have a current project, just re-evaluate workspace normally.
       this.ensureSessionForCurrentWorkspace(true);

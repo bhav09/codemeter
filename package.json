@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "npm run test --workspaces",
+    "test": "npm run test --workspaces --if-present",
     "lint": "eslint packages/*/src/**/*.ts",
     "clean": "npm run clean --workspaces && rm -rf node_modules"
   },
