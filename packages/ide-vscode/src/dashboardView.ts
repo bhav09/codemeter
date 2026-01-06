@@ -100,6 +100,12 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     const currentWorkspace = workspaceFolders?.[0]?.name ?? null;
     const currentWorkspacePath = workspaceFolders?.[0]?.uri?.fsPath ?? null;
 
+    // Detect IDE type for context-aware UI
+    const appName = (vscode.env.appName || '').toLowerCase();
+    const ideType: 'cursor' | 'vscode' | 'antigravity' = 
+      appName.includes('cursor') ? 'cursor' :
+      appName.includes('antigravity') ? 'antigravity' : 'vscode';
+
     try {
       projects = new ProjectRepository().getAll();
       const analytics = new AnalyticsRepository();
@@ -156,6 +162,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     await this.view.webview.postMessage({
       type: 'state',
       now,
+      ideType,
       sessionTokenSet,
       connectorMode: this.connectorMode,
       syncState,
@@ -429,18 +436,30 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       <div id="workspacePath" class="workspace-path"></div>
     </div>
 
-    <div class="btn-row">
-      <button id="refresh" class="btn btn-primary">↻ Sync Usage</button>
-      <button id="connect" class="btn btn-secondary">Connect Cursor</button>
-      <button id="budget" class="btn btn-secondary">Set Budget</button>
+    <div id="cursorOnlySection">
+      <div class="btn-row">
+        <button id="refresh" class="btn btn-primary">↻ Sync Usage</button>
+        <button id="connect" class="btn btn-secondary">Connect Cursor</button>
+        <button id="budget" class="btn btn-secondary">Set Budget</button>
+      </div>
+
+      <div class="btn-row">
+        <button id="review" class="btn btn-secondary">Review Attribution</button>
+        <button id="disconnect" class="btn btn-danger">Disconnect</button>
+      </div>
     </div>
 
-    <div class="btn-row">
-      <button id="review" class="btn btn-secondary">Review Attribution</button>
-      <button id="disconnect" class="btn btn-danger">Disconnect</button>
+    <div id="vscodeNotice" class="card" style="display: none; background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.2);">
+      <div style="font-size: 11px; color: var(--vscode-foreground);">
+        <strong>📊 Local Tracking Active</strong>
+        <p style="margin-top: 6px; color: var(--vscode-descriptionForeground);">
+          Estimated costs are tracked automatically. For exact usage data, 
+          use this extension in <strong>Cursor</strong> and connect your account.
+        </p>
+      </div>
     </div>
 
-    <div class="select-group">
+    <div id="connectorSection" class="select-group">
       <div class="select-wrapper">
         <div class="select-label">Connector</div>
         <select id="connectorMode">
@@ -456,7 +475,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
 
-    <div id="syncBar" class="sync-bar">
+    <div id="syncBar" class="sync-bar" style="display: none;">
       <span>⏱</span>
       <span id="syncText">Last sync: Never</span>
     </div>
@@ -507,25 +526,27 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
 
-    <div class="section-header">Synced Costs (Cursor API)</div>
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div id="statToday" class="stat-value">$0.00</div>
-        <div class="stat-label">Today</div>
+    <div id="syncedCostsSection">
+      <div class="section-header">Synced Costs (Cursor API)</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div id="statToday" class="stat-value">$0.00</div>
+          <div class="stat-label">Today</div>
+        </div>
+        <div class="stat-card">
+          <div id="statWeek" class="stat-value">$0.00</div>
+          <div class="stat-label">This Week</div>
+        </div>
+        <div class="stat-card">
+          <div id="statMonth" class="stat-value">$0.00</div>
+          <div class="stat-label">This Month</div>
+        </div>
       </div>
-      <div class="stat-card">
-        <div id="statWeek" class="stat-value">$0.00</div>
-        <div class="stat-label">This Week</div>
-      </div>
-      <div class="stat-card">
-        <div id="statMonth" class="stat-value">$0.00</div>
-        <div class="stat-label">This Month</div>
-      </div>
-    </div>
 
-    <div class="metrics-row">
-      <div class="metric">Unattributed: <span id="unattributedVal" class="metric-value">$0.00</span></div>
-      <div class="metric">Conflicts: <span id="conflictsVal" class="metric-value">$0.00</span></div>
+      <div class="metrics-row">
+        <div class="metric">Unattributed: <span id="unattributedVal" class="metric-value">$0.00</span></div>
+        <div class="metric">Conflicts: <span id="conflictsVal" class="metric-value">$0.00</span></div>
+      </div>
     </div>
 
     <div class="section-header">Activity Heatmap (7 days)</div>
@@ -649,9 +670,34 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           var msg = event.data;
           if (!msg || msg.type !== 'state') return;
 
-          // Auth status
+          // IDE-specific UI
+          var isCursor = msg.ideType === 'cursor';
+          var cursorSection = $('cursorOnlySection');
+          var vscodeNotice = $('vscodeNotice');
+          var syncedCostsSection = $('syncedCostsSection');
+          var connectorSection = $('connectorSection');
+          var syncBar = $('syncBar');
+          
+          if (isCursor) {
+            cursorSection.style.display = 'block';
+            vscodeNotice.style.display = 'none';
+            syncedCostsSection.style.display = 'block';
+            connectorSection.style.display = 'flex';
+            syncBar.style.display = 'flex';
+          } else {
+            cursorSection.style.display = 'none';
+            vscodeNotice.style.display = 'block';
+            syncedCostsSection.style.display = 'none';
+            connectorSection.style.display = 'none';
+            syncBar.style.display = 'none';
+          }
+
+          // Auth status (only relevant for Cursor)
           var authEl = $('authStatus');
-          if (msg.sessionTokenSet) {
+          if (!isCursor) {
+            authEl.className = 'status connected';
+            authEl.innerHTML = '<span class="status-dot"></span><span>' + (msg.ideType === 'vscode' ? 'VS Code' : 'Antigravity') + '</span>';
+          } else if (msg.sessionTokenSet) {
             authEl.className = 'status connected';
             authEl.innerHTML = '<span class="status-dot"></span><span>Connected</span>';
           } else {
