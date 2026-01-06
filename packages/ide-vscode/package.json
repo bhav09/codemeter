@@ -2,8 +2,8 @@
   "name": "codemeter",
   "displayName": "CodeMeter - AI Coding Cost Tracker",
   "description": "Track AI coding agent usage and costs across projects and IDEs",
-  "version": "0.1.0",
-  "publisher": "codemeter",
+  "version": "0.1.2",
+  "publisher": "BhavishyaPandit9",
   "repository": {
     "type": "git",
     "url": "https://github.com/bhav09/codemeter"
