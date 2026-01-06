@@ -20,7 +20,7 @@
 
 ## Support
 
-For issues or feature requests, visit our [GitHub Repository](https://github.com/bhavishya-dev/codemeter).
+For issues or feature requests, visit our [GitHub Repository](https://github.com/bhav09/codemeter).
 
 ---
 
