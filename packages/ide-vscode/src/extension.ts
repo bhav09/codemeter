@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { ProjectSessionTracker } from './sessionTracker';
-import { startPairingServer } from './pairingServer';
 import { showDashboard } from './dashboardWebview';
 import { runSync } from './sync';
 import { checkBudgetsAndNotify, setBudgetForCurrentProject } from './budgets';
@@ -12,9 +11,52 @@ let tracker: ProjectSessionTracker | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
 let dashboardProvider: DashboardViewProvider | null = null;
 
+/**
+ * Prompt user to enter their Cursor session token directly.
+ * This is simpler than the Chrome extension pairing flow.
+ */
+async function connectCursorSimple(context: vscode.ExtensionContext): Promise<boolean> {
+  const info = await vscode.window.showInformationMessage(
+    'To connect Cursor, you need your session token from cursor.sh',
+    { modal: false },
+    'Enter Token',
+    'How to get token?'
+  );
+
+  if (info === 'How to get token?') {
+    await vscode.env.openExternal(vscode.Uri.parse('https://www.cursor.com/settings'));
+    await vscode.window.showInformationMessage(
+      'Go to Cursor Settings → Account section. Look for your session token or API key. ' +
+      'Alternatively, open browser DevTools on cursor.com, go to Application → Cookies, and find the session token.',
+      { modal: true }
+    );
+    return connectCursorSimple(context); // Retry
+  }
+
+  if (info !== 'Enter Token') {
+    return false;
+  }
+
+  const token = await vscode.window.showInputBox({
+    title: 'Cursor Session Token',
+    prompt: 'Paste your Cursor session token (stored securely)',
+    password: true,
+    placeHolder: 'Your session token from cursor.com...',
+    validateInput: (v) => {
+      if (!v || v.length < 10) return 'Token appears too short. Please enter a valid session token.';
+      return null;
+    }
+  });
+
+  if (!token) return false;
+
+  await context.secrets.store('cursor.sessionToken', token);
+  await vscode.window.showInformationMessage('CodeMeter: Cursor account connected successfully!');
+  return true;
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   // Register the webview view provider FIRST, before any async operations
-  // This ensures VS Code can resolve the view immediately when needed
   try {
     dashboardProvider = new DashboardViewProvider(context, {
       refresh: async (mode) => {
@@ -25,18 +67,14 @@ export async function activate(context: vscode.ExtensionContext) {
         await dashboardProvider?.refresh();
       },
       connectCursor: async () => {
-        const server = await startPairingServer(context);
-        context.subscriptions.push({ dispose: () => void server.dispose() });
-        const url = `http://127.0.0.1:${server.port}/pair`;
-        await vscode.env.openExternal(vscode.Uri.parse(url));
-        try {
-          await server.awaitToken();
-        } finally {
-          await server.dispose();
+        const connected = await connectCursorSimple(context);
+        if (connected) {
+          await dashboardProvider?.refresh();
         }
       },
       disconnectCursor: async () => {
         await context.secrets.delete('cursor.sessionToken');
+        await vscode.window.showInformationMessage('CodeMeter: Cursor account disconnected.');
       },
       setBudget: async () => {
         await setBudgetForCurrentProject();
@@ -46,8 +84,6 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     });
 
-    // Register provider synchronously before any async operations
-    // This must happen early so VS Code can resolve the view when needed
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider, {
         webviewOptions: { retainContextWhenHidden: true }
@@ -55,15 +91,20 @@ export async function activate(context: vscode.ExtensionContext) {
     );
   } catch (error) {
     console.error('CodeMeter: Failed to register dashboard view provider:', error);
-    // Re-throw to prevent silent failures
     throw error;
   }
 
+  // Start session tracking - this creates the project entry for the current workspace
   const enabled = vscode.workspace.getConfiguration('codemeter').get<boolean>('enableTracking', true);
   if (enabled) {
     tracker = new ProjectSessionTracker();
     tracker.start();
     context.subscriptions.push(tracker);
+    
+    // Refresh dashboard after a short delay to show the newly created project
+    setTimeout(async () => {
+      await dashboardProvider?.refresh();
+    }, 500);
   }
 
   context.subscriptions.push(
@@ -71,22 +112,15 @@ export async function activate(context: vscode.ExtensionContext) {
       await showDashboard();
     }),
     vscode.commands.registerCommand('codemeter.connectCursor', async () => {
-      const server = await startPairingServer(context);
-      context.subscriptions.push({ dispose: () => void server.dispose() });
-
-      const url = `http://127.0.0.1:${server.port}/pair`;
-      await vscode.env.openExternal(vscode.Uri.parse(url));
-
-      try {
-        await server.awaitToken();
-        await vscode.window.showInformationMessage('CodeMeter: Cursor account connected.');
-      } finally {
-        await server.dispose();
+      const connected = await connectCursorSimple(context);
+      if (connected) {
+        await dashboardProvider?.refresh();
       }
     }),
     vscode.commands.registerCommand('codemeter.disconnectCursor', async () => {
       await context.secrets.delete('cursor.sessionToken');
       await vscode.window.showInformationMessage('CodeMeter: Cursor account disconnected.');
+      await dashboardProvider?.refresh();
     }),
     vscode.commands.registerCommand('codemeter.refreshData', async () => {
       await vscode.window.withProgress(
@@ -96,6 +130,7 @@ export async function activate(context: vscode.ExtensionContext) {
           const startMs = now - 24 * 60 * 60 * 1000;
           const count = await runSync(context, { mode: 'cursor-dashboard', startMs, endMs: now });
           await checkBudgetsAndNotify();
+          await dashboardProvider?.refresh();
           await vscode.window.showInformationMessage(`CodeMeter: synced ${count} usage events.`);
         }
       );
@@ -119,7 +154,7 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Status bar entry point (no command palette required)
+  // Status bar entry point
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = 'CodeMeter';
   status.tooltip = 'Open CodeMeter dashboard';
@@ -129,8 +164,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const pollMinutes = Math.max(60, vscode.workspace.getConfiguration('codemeter').get<number>('pollInterval', 60));
 
-  // Kick off an initial sync shortly after activation so users see usage without waiting an hour.
-  // Respect the configured poll interval and rely on SyncStateRepository high-water mark for safety.
+  // Initial sync after activation (if credentials exist)
   setTimeout(async () => {
     try {
       const mode = (context.globalState.get('connectorMode') as any) || 'cursor-dashboard';
@@ -151,25 +185,25 @@ export async function activate(context: vscode.ExtensionContext) {
       await checkBudgetsAndNotify();
       await dashboardProvider?.refresh();
     } catch {
-      // best-effort; user can always hit "Refresh usage"
+      // best-effort
     }
   }, 4_000);
 
+  // Background polling
   pollTimer = setInterval(async () => {
     try {
       const now = Date.now();
-      const startMs = now - 60 * 60 * 1000; // keep polite + bounded for MVP
+      const startMs = now - 60 * 60 * 1000;
       const mode = (context.globalState.get('connectorMode') as any) || 'cursor-dashboard';
       await runSync(context, { mode, startMs, endMs: now });
       await checkBudgetsAndNotify();
       await dashboardProvider?.refresh();
     } catch {
-      // best-effort background sync; surfacing would be noisy
+      // best-effort
     }
   }, pollMinutes * 60_000);
 
-  // Lightweight maintenance: compact JSONL stores occasionally to keep reads fast.
-  // Runs best-effort and never blocks activation.
+  // Maintenance compaction
   setTimeout(() => {
     try {
       new MaintenanceRepository().compactAll();
@@ -184,5 +218,3 @@ export function deactivate() {
   pollTimer = null;
   tracker = null;
 }
-
-

@@ -388,9 +388,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         </select>
       </div>
       <div class="select-wrapper">
-        <div class="select-label">Project</div>
+        <div class="select-label">Workspace</div>
         <select id="projectSelect">
-          <option value="">(no projects)</option>
+          <option value="">(no workspaces)</option>
         </select>
       </div>
     </div>
@@ -472,7 +472,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             var sel = p.projectKey === selectedKey ? 'selected' : '';
             return '<option value="' + esc(p.projectKey) + '" ' + sel + '>' + esc(p.displayName) + '</option>';
           }).join('');
-          $('projectSelect').innerHTML = opts || '<option value="">(no projects)</option>';
+          $('projectSelect').innerHTML = opts || '<option value="">(no workspaces)</option>';
         }
 
         function renderHeatmap(h) {
