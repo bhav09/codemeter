@@ -153,7 +153,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
 
   private renderHtml(webview: vscode.Webview): string {
     const nonce = String(Math.random()).slice(2);
-    const csp = `default-src 'none'; img-src ${webview.cspSource} https:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    // Use a more permissive CSP for debugging - can tighten later
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
 
     return `<!doctype html>
 <html>
@@ -162,16 +163,17 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     <meta http-equiv="Content-Security-Policy" content="${csp}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
-      body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 12px; }
-      .row { display:flex; gap: 8px; flex-wrap: wrap; }
-      button { padding: 8px 10px; }
+      body { font-family: var(--vscode-font-family, -apple-system, system-ui, sans-serif); margin: 0; padding: 12px; color: var(--vscode-foreground, #ccc); background: var(--vscode-editor-background, transparent); }
+      .row { display:flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+      button { padding: 6px 10px; background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); border: none; border-radius: 2px; cursor: pointer; font-size: 12px; }
+      button:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
       table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-      th, td { padding: 8px; border-bottom: 1px solid rgba(128,128,128,0.25); font-size: 12px; }
-      th { text-align: left; }
+      th, td { padding: 6px 8px; border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.25)); font-size: 12px; text-align: left; }
       td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-      .muted { color: rgba(128,128,128,0.9); font-size: 12px; }
-      .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: rgba(128,128,128,0.15); }
-      h2 { margin: 6px 0 10px; font-size: 14px; }
+      .muted { color: var(--vscode-descriptionForeground, rgba(128,128,128,0.9)); font-size: 11px; }
+      .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; background: var(--vscode-badge-background, rgba(128,128,128,0.15)); color: var(--vscode-badge-foreground, inherit); }
+      h2 { margin: 12px 0 8px; font-size: 13px; font-weight: 600; }
+      select { background: var(--vscode-dropdown-background, #3c3c3c); color: var(--vscode-dropdown-foreground, #ccc); border: 1px solid var(--vscode-dropdown-border, #3c3c3c); padding: 4px; font-size: 11px; }
     </style>
   </head>
   <body>
@@ -181,155 +183,142 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       <button id="disconnect">Disconnect</button>
       <button id="budget">Set budget</button>
       <button id="review">Review attribution</button>
-      <span id="auth" class="pill">auth: …</span>
+      <span id="auth" class="pill">auth: checking...</span>
     </div>
 
-    <p class="muted">Project-only attribution is time-based. “Unattributed” is expected when usage happens outside an active project session.</p>
+    <p class="muted">Project-only attribution is time-based. "Unattributed" is expected when usage happens outside an active project session.</p>
 
-    <div class="row" style="margin-top: 8px;">
-      <label class="muted" style="display:flex; align-items:center; gap:8px;">
+    <div class="row">
+      <label class="muted" style="display:flex; align-items:center; gap:6px;">
         Connector:
         <select id="connectorMode">
           <option value="cursor-dashboard">Individual (dashboard)</option>
           <option value="cursor-admin">Teams/Enterprise (admin)</option>
         </select>
       </label>
-      <label class="muted" style="display:flex; align-items:center; gap:8px;">
+      <label class="muted" style="display:flex; align-items:center; gap:6px;">
         Project:
-        <select id="projectSelect"></select>
+        <select id="projectSelect"><option value="">(no projects yet)</option></select>
       </label>
+    </div>
+
+    <div class="row">
       <span id="projectStats" class="muted"></span>
     </div>
 
-    <div class="row" style="margin-top: 8px;">
-      <span id="unattributed" class="pill">unattributed: …</span>
-      <span id="conflicts" class="pill">conflicts: …</span>
-      <span id="sync" class="pill">sync: …</span>
+    <div class="row">
+      <span id="unattributed" class="pill">unattributed: ...</span>
+      <span id="conflicts" class="pill">conflicts: ...</span>
+      <span id="sync" class="pill">sync: never</span>
     </div>
 
     <h2>Cost by hour (last 7 days)</h2>
-    <div id="heatmap" style="display:grid; grid-template-columns: repeat(24, 1fr); gap: 2px; margin-bottom: 10px;"></div>
+    <div id="heatmap" style="display:grid; grid-template-columns: repeat(24, 1fr); gap: 2px; margin-bottom: 10px; min-height: 16px;"></div>
 
     <h2>Last 7 days</h2>
     <table>
       <thead>
-        <tr><th>Project</th><th class="num">Cost</th><th class="num">Events</th><th class="num">Avg confidence</th></tr>
+        <tr><th>Project</th><th class="num">Cost</th><th class="num">Events</th><th class="num">Confidence</th></tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="4" class="muted">Loading…</td></tr>
+        <tr><td colspan="4" class="muted">No data yet. Click "Refresh usage" to sync.</td></tr>
       </tbody>
     </table>
 
     <h2>This month</h2>
     <table>
       <thead>
-        <tr><th>Project</th><th class="num">Cost</th><th class="num">Events</th><th class="num">Avg confidence</th></tr>
+        <tr><th>Project</th><th class="num">Cost</th><th class="num">Events</th><th class="num">Confidence</th></tr>
       </thead>
       <tbody id="tableBodyMonth">
-        <tr><td colspan="4" class="muted">Loading…</td></tr>
+        <tr><td colspan="4" class="muted">No data yet.</td></tr>
       </tbody>
     </table>
 
     <script nonce="${nonce}">
-      const vscode = acquireVsCodeApi();
-      const $ = (id) => document.getElementById(id);
+      (function() {
+        var vscode = acquireVsCodeApi();
+        function $(id) { return document.getElementById(id); }
+        function fmtMoney(cents) { return '$' + (cents / 100).toFixed(2); }
+        function fmtPct(x) { return Math.round(x * 100) + '%'; }
+        function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-      function fmtMoney(cents) { return '$' + (cents / 100).toFixed(2); }
-      function fmtPct(x) { return Math.round(x * 100) + '%'; }
-      function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-      function renderTable(rows, targetId, projects) {
-        const pmap = new Map((projects || []).map(p => [p.projectKey, p]));
-        const html = (rows || []).map(r => {
-          const name = r.projectKey === 'unattributed' ? 'Unattributed' : (pmap.get(r.projectKey)?.displayName || r.projectKey);
-          return '<tr>'
-            + '<td>' + esc(name) + '</td>'
-            + '<td class="num">' + fmtMoney(r.totalCents || 0) + '</td>'
-            + '<td class="num">' + (r.eventCount || 0) + '</td>'
-            + '<td class="num">' + fmtPct(r.avgConfidence || 0) + '</td>'
-            + '</tr>';
-        }).join('\\n');
-        $(targetId).innerHTML = html || '<tr><td colspan="4" class="muted">No data yet. Click “Refresh usage”.</td></tr>';
-      }
-
-      function renderProjectSelect(projects, selectedKey) {
-        const opts = (projects || []).map(p => {
-          const sel = p.projectKey === selectedKey ? 'selected' : '';
-          return '<option value="' + esc(p.projectKey) + '" ' + sel + '>' + esc(p.displayName) + '</option>';
-        }).join('\\n');
-        $('projectSelect').innerHTML = opts || '<option value="">(no projects yet)</option>';
-      }
-
-      function renderProjectStats(m) {
-        if (!m) { $('projectStats').textContent = ''; return; }
-        const topModels = Object.entries(m.modelBreakdown || {})
-          .sort((a,b)=> (b[1]||0)-(a[1]||0))
-          .slice(0, 3)
-          .map(([k,v]) => k + ' ' + fmtMoney(v||0))
-          .join(' · ');
-        $('projectStats').textContent =
-          '7d: ' + fmtMoney(m.totalCents||0) +
-          ' · events ' + (m.eventCount||0) +
-          ' · confidence ' + fmtPct(m.avgConfidence||0) +
-          (topModels ? (' · top models: ' + topModels) : '');
-      }
-
-      function renderUnattributed(u) {
-        if (!u) { $('unattributed').textContent = 'unattributed: …'; return; }
-        $('unattributed').textContent = 'unattributed (7d): ' + fmtMoney(u.totalCents||0) + ' · events ' + (u.eventCount||0);
-      }
-
-      function renderConflicts(c) {
-        if (!c) { $('conflicts').textContent = 'conflicts: …'; return; }
-        $('conflicts').textContent = 'conflicts (7d): ' + fmtMoney(c.totalCents||0) + ' · events ' + (c.eventCount||0);
-      }
-
-      function renderSyncState(s) {
-        if (!s) { $('sync').textContent = 'sync: never'; return; }
-        const last = s.lastSyncAtMs ? new Date(s.lastSyncAtMs).toLocaleString() : 'unknown';
-        const err = s.lastError ? (' · error: ' + s.lastError) : '';
-        $('sync').textContent = 'sync: ' + last + err;
-      }
-
-      function renderHeatmap(h) {
-        const el = $('heatmap');
-        if (!h || !Array.isArray(h.hourTotalsCents)) { el.innerHTML = ''; return; }
-        const max = Math.max(1, ...h.hourTotalsCents);
-        el.innerHTML = h.hourTotalsCents.map((c, i) => {
-          const intensity = Math.round((c / max) * 200);
-          const bg = 'rgba(60, 160, 255,' + (0.1 + (c / max) * 0.8).toFixed(2) + ')';
-          return '<div title="' + i + ':00 — ' + fmtMoney(c) + '" style="height: 16px; background:' + bg + '; border-radius: 2px;"></div>';
-        }).join('');
-      }
-
-      window.addEventListener('message', (event) => {
-        const msg = event.data;
-        if (msg?.type !== 'state') return;
-        $('auth').textContent = 'auth: ' + (msg.sessionTokenSet ? 'connected' : 'not connected');
-        $('connectorMode').value = msg.connectorMode || 'cursor-dashboard';
-        renderTable(msg.totals?.week, 'tableBody', msg.projects);
-        renderTable(msg.totals?.month, 'tableBodyMonth', msg.projects);
-        renderProjectSelect(msg.projects, msg.selectedProjectKey);
-        renderProjectStats(msg.selectedMetricsWeek);
-        renderUnattributed(msg.unattributedWeek);
-        renderConflicts(msg.conflictsWeek);
-        renderSyncState(msg.syncState);
-        renderHeatmap(msg.selectedHeatmapWeek);
-        if (msg.uiError) {
-          // Keep it subtle—dashboard should be usable even if reads fail.
-          $('projectStats').textContent = ( $('projectStats').textContent ? ($('projectStats').textContent + ' · ') : '' ) + 'storage: error';
+        function renderTable(rows, targetId, projects) {
+          var pmap = {};
+          (projects || []).forEach(function(p) { pmap[p.projectKey] = p; });
+          var html = (rows || []).map(function(r) {
+            var name = r.projectKey === 'unattributed' ? 'Unattributed' : ((pmap[r.projectKey] && pmap[r.projectKey].displayName) || r.projectKey);
+            return '<tr><td>' + esc(name) + '</td><td class="num">' + fmtMoney(r.totalCents || 0) + '</td><td class="num">' + (r.eventCount || 0) + '</td><td class="num">' + fmtPct(r.avgConfidence || 0) + '</td></tr>';
+          }).join('');
+          $(targetId).innerHTML = html || '<tr><td colspan="4" class="muted">No data yet. Click "Refresh usage".</td></tr>';
         }
-      });
 
-      $('refresh').onclick = () => vscode.postMessage({ type: 'refresh' });
-      $('connect').onclick = () => vscode.postMessage({ type: 'connectCursor' });
-      $('disconnect').onclick = () => vscode.postMessage({ type: 'disconnectCursor' });
-      $('budget').onclick = () => vscode.postMessage({ type: 'setBudget' });
-      $('review').onclick = () => vscode.postMessage({ type: 'reviewAttribution' });
-      $('projectSelect').onchange = () => vscode.postMessage({ type: 'selectProject', projectKey: $('projectSelect').value });
-      $('connectorMode').onchange = () => vscode.postMessage({ type: 'setConnectorMode', mode: $('connectorMode').value });
+        function renderProjectSelect(projects, selectedKey) {
+          var opts = (projects || []).map(function(p) {
+            var sel = p.projectKey === selectedKey ? 'selected' : '';
+            return '<option value="' + esc(p.projectKey) + '" ' + sel + '>' + esc(p.displayName) + '</option>';
+          }).join('');
+          $('projectSelect').innerHTML = opts || '<option value="">(no projects yet)</option>';
+        }
 
-      vscode.postMessage({ type: 'ready' });
+        function renderProjectStats(m) {
+          if (!m) { $('projectStats').textContent = ''; return; }
+          $('projectStats').textContent = '7d: ' + fmtMoney(m.totalCents||0) + ' - events ' + (m.eventCount||0) + ' - confidence ' + fmtPct(m.avgConfidence||0);
+        }
+
+        function renderUnattributed(u) {
+          $('unattributed').textContent = 'unattributed (7d): ' + fmtMoney((u && u.totalCents)||0) + ' - ' + ((u && u.eventCount)||0) + ' events';
+        }
+
+        function renderConflicts(c) {
+          $('conflicts').textContent = 'conflicts (7d): ' + fmtMoney((c && c.totalCents)||0) + ' - ' + ((c && c.eventCount)||0) + ' events';
+        }
+
+        function renderSyncState(s) {
+          if (!s) { $('sync').textContent = 'sync: never'; return; }
+          var last = s.lastSyncAtMs ? new Date(s.lastSyncAtMs).toLocaleString() : 'unknown';
+          var err = s.lastError ? (' - error: ' + s.lastError) : '';
+          $('sync').textContent = 'sync: ' + last + err;
+        }
+
+        function renderHeatmap(h) {
+          var el = $('heatmap');
+          if (!h || !h.hourTotalsCents || !h.hourTotalsCents.length) { el.innerHTML = ''; return; }
+          var max = Math.max.apply(null, [1].concat(h.hourTotalsCents));
+          el.innerHTML = h.hourTotalsCents.map(function(c, i) {
+            var bg = 'rgba(60, 160, 255,' + (0.1 + (c / max) * 0.8).toFixed(2) + ')';
+            return '<div title="' + i + ':00 - ' + fmtMoney(c) + '" style="height: 16px; background:' + bg + '; border-radius: 2px;"></div>';
+          }).join('');
+        }
+
+        window.addEventListener('message', function(event) {
+          var msg = event.data;
+          if (!msg || msg.type !== 'state') return;
+          $('auth').textContent = 'auth: ' + (msg.sessionTokenSet ? 'connected' : 'not connected');
+          $('connectorMode').value = msg.connectorMode || 'cursor-dashboard';
+          renderTable(msg.totals && msg.totals.week, 'tableBody', msg.projects);
+          renderTable(msg.totals && msg.totals.month, 'tableBodyMonth', msg.projects);
+          renderProjectSelect(msg.projects, msg.selectedProjectKey);
+          renderProjectStats(msg.selectedMetricsWeek);
+          renderUnattributed(msg.unattributedWeek);
+          renderConflicts(msg.conflictsWeek);
+          renderSyncState(msg.syncState);
+          renderHeatmap(msg.selectedHeatmapWeek);
+          if (msg.uiError) {
+            $('projectStats').textContent = ($('projectStats').textContent || '') + ' - storage: error';
+          }
+        });
+
+        $('refresh').onclick = function() { vscode.postMessage({ type: 'refresh' }); };
+        $('connect').onclick = function() { vscode.postMessage({ type: 'connectCursor' }); };
+        $('disconnect').onclick = function() { vscode.postMessage({ type: 'disconnectCursor' }); };
+        $('budget').onclick = function() { vscode.postMessage({ type: 'setBudget' }); };
+        $('review').onclick = function() { vscode.postMessage({ type: 'reviewAttribution' }); };
+        $('projectSelect').onchange = function() { vscode.postMessage({ type: 'selectProject', projectKey: $('projectSelect').value }); };
+        $('connectorMode').onchange = function() { vscode.postMessage({ type: 'setConnectorMode', mode: $('connectorMode').value }); };
+
+        vscode.postMessage({ type: 'ready' });
+      })();
     </script>
   </body>
 </html>`;
