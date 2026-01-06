@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AnalyticsRepository, ProjectRepository, SyncStateRepository } from '@codemeter/database';
+import { AnalyticsRepository, ProjectRepository, SyncStateRepository, AIInteractionRepository } from '@codemeter/database';
 
 type DashboardMessage =
   | { type: 'ready' }
@@ -89,6 +89,12 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     let selectedMetricsWeek: any = null;
     let selectedHeatmapWeek: any = null;
 
+    // Estimated costs from AI tracker
+    let estimatedToday: any = null;
+    let estimatedWeek: any = null;
+    let estimatedMonth: any = null;
+    let estimatedByProject: any[] = [];
+
     // Get current workspace info
     const workspaceFolders = vscode.workspace.workspaceFolders;
     const currentWorkspace = workspaceFolders?.[0]?.name ?? null;
@@ -106,6 +112,21 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
 
       const syncRepo = new SyncStateRepository();
       syncState = syncRepo.get(this.connectorMode === 'cursor-admin' ? 'cursor-admin' : 'cursor-dashboard');
+
+      // Get estimated costs from AI tracker
+      const aiRepo = new AIInteractionRepository();
+      estimatedByProject = aiRepo.getAllProjectsSummary(weekStart, now);
+      
+      // Get estimates for current project if known
+      const currentProjectKey = projects.find((p: any) => 
+        p.workspacePath === currentWorkspacePath
+      )?.projectKey;
+      
+      if (currentProjectKey) {
+        estimatedToday = aiRepo.getEstimatedCostSummary(currentProjectKey, dayStart, now);
+        estimatedWeek = aiRepo.getEstimatedCostSummary(currentProjectKey, weekStart, now);
+        estimatedMonth = aiRepo.getEstimatedCostSummary(currentProjectKey, monthStart, now);
+      }
 
       this.lastUiError = null;
     } catch (e: any) {
@@ -150,6 +171,12 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         today: byProjectToday,
         week: byProjectWeek,
         month: byProjectMonth
+      },
+      estimated: {
+        today: estimatedToday,
+        week: estimatedWeek,
+        month: estimatedMonth,
+        byProject: estimatedByProject
       },
       uiError: this.lastUiError
     });
@@ -275,7 +302,41 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         text-align: center;
       }
       .stat-value { font-size: 16px; font-weight: 700; color: var(--vscode-foreground); }
+      .stat-value.estimated { color: #f59e0b; }
       .stat-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+      .stat-sub { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+      .stat-sub .est { color: #f59e0b; }
+
+      /* Estimated costs card */
+      .estimated-card {
+        background: linear-gradient(135deg, rgba(245,158,11,0.1) 0%, rgba(251,191,36,0.1) 100%);
+        border: 1px solid rgba(245,158,11,0.2);
+      }
+      .estimated-header { 
+        display: flex; 
+        align-items: center; 
+        gap: 6px; 
+        margin-bottom: 8px;
+        font-weight: 600;
+        font-size: 11px;
+        color: #f59e0b;
+      }
+      .estimated-note {
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+        font-style: italic;
+        margin-top: 8px;
+      }
+      .breakdown-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .breakdown-item { 
+        display: flex; 
+        justify-content: space-between; 
+        font-size: 11px; 
+        padding: 4px 0;
+        border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.05));
+      }
+      .breakdown-type { color: var(--vscode-descriptionForeground); }
+      .breakdown-value { font-weight: 600; color: var(--vscode-foreground); }
 
       /* Sync info */
       .sync-bar {
@@ -400,6 +461,53 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       <span id="syncText">Last sync: Never</span>
     </div>
 
+    <div class="section-header">Estimated AI Costs (Local Tracking)</div>
+    <div id="estimatedCard" class="card estimated-card">
+      <div class="estimated-header">
+        <span>⚡</span>
+        <span>Current Workspace Estimates</span>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div id="estToday" class="stat-value estimated">$0.00</div>
+          <div class="stat-label">Today</div>
+          <div id="estTodayCount" class="stat-sub">0 interactions</div>
+        </div>
+        <div class="stat-card">
+          <div id="estWeek" class="stat-value estimated">$0.00</div>
+          <div class="stat-label">This Week</div>
+          <div id="estWeekCount" class="stat-sub">0 interactions</div>
+        </div>
+        <div class="stat-card">
+          <div id="estMonth" class="stat-value estimated">$0.00</div>
+          <div class="stat-label">This Month</div>
+          <div id="estMonthCount" class="stat-sub">0 interactions</div>
+        </div>
+      </div>
+      <div class="breakdown-grid">
+        <div class="breakdown-item">
+          <span class="breakdown-type">💬 Chat</span>
+          <span id="breakdownChat" class="breakdown-value">$0.00</span>
+        </div>
+        <div class="breakdown-item">
+          <span class="breakdown-type">✨ Completions</span>
+          <span id="breakdownCompletion" class="breakdown-value">$0.00</span>
+        </div>
+        <div class="breakdown-item">
+          <span class="breakdown-type">✏️ Inline Edits</span>
+          <span id="breakdownInline" class="breakdown-value">$0.00</span>
+        </div>
+        <div class="breakdown-item">
+          <span class="breakdown-type">❓ Other</span>
+          <span id="breakdownUnknown" class="breakdown-value">$0.00</span>
+        </div>
+      </div>
+      <div class="estimated-note">
+        Estimates based on detected AI interactions. Actual costs may vary.
+      </div>
+    </div>
+
+    <div class="section-header">Synced Costs (Cursor API)</div>
     <div class="stats-grid">
       <div class="stat-card">
         <div id="statToday" class="stat-value">$0.00</div>
@@ -508,6 +616,35 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           }
         }
 
+        function renderEstimated(est) {
+          if (!est) return;
+          
+          // Today
+          if (est.today) {
+            $('estToday').textContent = fmtMoney(est.today.totalEstimatedCents || 0);
+            $('estTodayCount').textContent = (est.today.interactionCount || 0) + ' interactions';
+          }
+          
+          // Week
+          if (est.week) {
+            $('estWeek').textContent = fmtMoney(est.week.totalEstimatedCents || 0);
+            $('estWeekCount').textContent = (est.week.interactionCount || 0) + ' interactions';
+            
+            // Breakdown
+            var b = est.week.breakdown || {};
+            $('breakdownChat').textContent = fmtMoney((b.chat && b.chat.cents) || 0);
+            $('breakdownCompletion').textContent = fmtMoney((b.completion && b.completion.cents) || 0);
+            $('breakdownInline').textContent = fmtMoney((b.inlineEdit && b.inlineEdit.cents) || 0);
+            $('breakdownUnknown').textContent = fmtMoney((b.unknown && b.unknown.cents) || 0);
+          }
+          
+          // Month
+          if (est.month) {
+            $('estMonth').textContent = fmtMoney(est.month.totalEstimatedCents || 0);
+            $('estMonthCount').textContent = (est.month.interactionCount || 0) + ' interactions';
+          }
+        }
+
         window.addEventListener('message', function(event) {
           var msg = event.data;
           if (!msg || msg.type !== 'state') return;
@@ -529,7 +666,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           // Connector
           $('connectorMode').value = msg.connectorMode || 'cursor-dashboard';
 
-          // Stats
+          // Estimated costs (local tracking)
+          renderEstimated(msg.estimated);
+
+          // Synced stats
           var todayTotal = sumCents(msg.totals && msg.totals.today);
           var weekTotal = sumCents(msg.totals && msg.totals.week);
           var monthTotal = sumCents(msg.totals && msg.totals.month);

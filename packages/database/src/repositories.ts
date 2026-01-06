@@ -1,4 +1,4 @@
-import { UsageEvent, ProjectSession, AttributionRecord, Project, Budget, SyncState } from '@codemeter/core';
+import { UsageEvent, ProjectSession, AttributionRecord, Project, Budget, SyncState, AIInteraction, EstimatedCostSummary } from '@codemeter/core';
 import { StoreKind } from './schema';
 import { StorageDriver, getStorageDriver } from './driver';
 import { readJsonDerived } from './schema';
@@ -347,11 +347,107 @@ export class MaintenanceRepository {
   constructor(private readonly driver: StorageDriver = getStorageDriver()) {}
 
   compactAll(): void {
-    const kinds: StoreKind[] = ['projects', 'sessions', 'events', 'attributions', 'budgets', 'sync_state'];
+    const kinds: StoreKind[] = ['projects', 'sessions', 'events', 'attributions', 'budgets', 'sync_state', 'ai_interactions'];
     for (const k of kinds) this.driver.compact(k);
   }
 
   compact(kind: StoreKind): void {
     this.driver.compact(kind);
+  }
+}
+
+type AIInteractionLine = { type: 'create'; interaction: AIInteraction };
+
+export class AIInteractionRepository {
+  constructor(private readonly driver: StorageDriver = getStorageDriver()) {}
+
+  create(interaction: AIInteraction): void {
+    this.driver.append('ai_interactions', { type: 'create', interaction } satisfies AIInteractionLine);
+  }
+
+  getAll(): AIInteraction[] {
+    const records = this.driver.readAll<AIInteractionLine>('ai_interactions');
+    return records
+      .filter(r => r?.type === 'create' && r?.interaction?.id)
+      .map(r => r.interaction);
+  }
+
+  getByTimeRange(startMs: number, endMs: number): AIInteraction[] {
+    return this.getAll()
+      .filter(i => i.timestampMs >= startMs && i.timestampMs <= endMs)
+      .sort((a, b) => b.timestampMs - a.timestampMs);
+  }
+
+  getByProjectKey(projectKey: string, startMs?: number, endMs?: number): AIInteraction[] {
+    let results = this.getAll().filter(i => i.projectKey === projectKey);
+    if (startMs !== undefined) {
+      results = results.filter(i => i.timestampMs >= startMs);
+    }
+    if (endMs !== undefined) {
+      results = results.filter(i => i.timestampMs <= endMs);
+    }
+    return results.sort((a, b) => b.timestampMs - a.timestampMs);
+  }
+
+  getEstimatedCostSummary(projectKey: string, startMs: number, endMs: number): EstimatedCostSummary {
+    const interactions = this.getByProjectKey(projectKey, startMs, endMs);
+    
+    const breakdown = {
+      chat: { count: 0, cents: 0 },
+      completion: { count: 0, cents: 0 },
+      inlineEdit: { count: 0, cents: 0 },
+      unknown: { count: 0, cents: 0 },
+    };
+    
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCents = 0;
+
+    for (const i of interactions) {
+      totalInputTokens += i.estimatedInputTokens;
+      totalOutputTokens += i.estimatedOutputTokens;
+      totalCents += i.estimatedCostCents;
+
+      const key = i.type === 'inline-edit' ? 'inlineEdit' : i.type;
+      if (breakdown[key as keyof typeof breakdown]) {
+        breakdown[key as keyof typeof breakdown].count += 1;
+        breakdown[key as keyof typeof breakdown].cents += i.estimatedCostCents;
+      }
+    }
+
+    return {
+      projectKey,
+      periodStartMs: startMs,
+      periodEndMs: endMs,
+      totalEstimatedCents: Math.round(totalCents * 100) / 100,
+      interactionCount: interactions.length,
+      breakdown,
+      totalInputTokens,
+      totalOutputTokens,
+    };
+  }
+
+  getAllProjectsSummary(startMs: number, endMs: number): Array<{
+    projectKey: string;
+    totalEstimatedCents: number;
+    interactionCount: number;
+  }> {
+    const interactions = this.getByTimeRange(startMs, endMs);
+    const byProject = new Map<string, { cents: number; count: number }>();
+
+    for (const i of interactions) {
+      const prev = byProject.get(i.projectKey) ?? { cents: 0, count: 0 };
+      prev.cents += i.estimatedCostCents;
+      prev.count += 1;
+      byProject.set(i.projectKey, prev);
+    }
+
+    return [...byProject.entries()]
+      .map(([projectKey, v]) => ({
+        projectKey,
+        totalEstimatedCents: Math.round(v.cents * 100) / 100,
+        interactionCount: v.count,
+      }))
+      .sort((a, b) => b.totalEstimatedCents - a.totalEstimatedCents);
   }
 }

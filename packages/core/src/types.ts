@@ -96,3 +96,54 @@ export interface AttributionResult {
   confidence: number;
   conflicts: ProjectSession[];
 }
+
+/**
+ * Estimated AI interaction detected locally (without API access).
+ * These are heuristic-based estimates, not exact measurements.
+ */
+export interface AIInteraction {
+  id: string;
+  projectKey: string;
+  timestampMs: number;
+  type: 'chat' | 'completion' | 'inline-edit' | 'unknown';
+  /** Estimated input tokens (prompt/context sent to AI) */
+  estimatedInputTokens: number;
+  /** Estimated output tokens (AI response) */
+  estimatedOutputTokens: number;
+  /** Estimated cost in cents based on typical model pricing */
+  estimatedCostCents: number;
+  /** Characters of text involved */
+  charCount: number;
+  /** Assumed model for cost calculation */
+  assumedModel: string;
+}
+
+/**
+ * Model pricing information for cost estimation.
+ * Prices are in cents per 1M tokens.
+ */
+export interface ModelPricing {
+  modelId: string;
+  displayName: string;
+  inputCentsPerMillion: number;
+  outputCentsPerMillion: number;
+}
+
+/**
+ * Summary of estimated AI costs for a workspace.
+ */
+export interface EstimatedCostSummary {
+  projectKey: string;
+  periodStartMs: number;
+  periodEndMs: number;
+  totalEstimatedCents: number;
+  interactionCount: number;
+  breakdown: {
+    chat: { count: number; cents: number };
+    completion: { count: number; cents: number };
+    inlineEdit: { count: number; cents: number };
+    unknown: { count: number; cents: number };
+  };
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}

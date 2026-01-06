@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ProjectSessionTracker } from './sessionTracker';
+import { AIInteractionTracker } from './aiTracker';
 import { showDashboard } from './dashboardWebview';
 import { runSync } from './sync';
 import { checkBudgetsAndNotify, setBudgetForCurrentProject } from './budgets';
@@ -8,6 +9,7 @@ import { DashboardViewProvider } from './dashboardView';
 import { MaintenanceRepository, SyncStateRepository } from '@codemeter/database';
 
 let tracker: ProjectSessionTracker | null = null;
+let aiTracker: AIInteractionTracker | null = null;
 let pollTimer: NodeJS.Timeout | null = null;
 let dashboardProvider: DashboardViewProvider | null = null;
 
@@ -100,6 +102,11 @@ export async function activate(context: vscode.ExtensionContext) {
     tracker = new ProjectSessionTracker();
     tracker.start();
     context.subscriptions.push(tracker);
+
+    // Start AI interaction tracking for estimated costs
+    aiTracker = new AIInteractionTracker();
+    aiTracker.start();
+    context.subscriptions.push(aiTracker);
     
     // Refresh dashboard after a short delay to show the newly created project
     setTimeout(async () => {
@@ -217,4 +224,5 @@ export function deactivate() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
   tracker = null;
+  aiTracker = null;
 }

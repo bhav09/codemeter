@@ -143,6 +143,18 @@ function compactByKind(kind: StoreKind, records: any[]): { snapshot: any; canoni
     return { snapshot, canonicalLines };
   }
 
+  // ai_interactions: dedupe by id
+  if (kind === 'ai_interactions') {
+    const map = new Map<string, any>();
+    for (const r of records) {
+      if (r?.type !== 'create' || !r?.interaction?.id) continue;
+      map.set(r.interaction.id, r);
+    }
+    const snapshot = [...map.values()].map(r => r.interaction);
+    const canonicalLines = [...map.values()].map(r => JSON.stringify({ type: 'create', interaction: r.interaction }));
+    return { snapshot, canonicalLines };
+  }
+
   return { snapshot: [], canonicalLines: [] };
 }
 

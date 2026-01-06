@@ -13,7 +13,7 @@ export function getDatabaseDir(): string {
   return codemeterDir;
 }
 
-export type StoreKind = 'projects' | 'sessions' | 'events' | 'attributions' | 'budgets' | 'sync_state';
+export type StoreKind = 'projects' | 'sessions' | 'events' | 'attributions' | 'budgets' | 'sync_state' | 'ai_interactions';
 
 export function getStoreFile(kind: StoreKind): string {
   return path.join(getDatabaseDir(), `${kind}.jsonl`);
