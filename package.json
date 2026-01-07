@@ -1,6 +1,6 @@
 {
   "name": "codemeter",
-  "version": "0.1.0",
+  "version": "0.1.11",
   "description": "IDE-agnostic extension for AI coding agent cost tracking",
   "private": true,
   "repository": {
