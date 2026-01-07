@@ -44,7 +44,7 @@ async function connectCursorSimple(context: vscode.ExtensionContext): Promise<bo
     prompt: 'Paste your Cursor session token (stored securely)',
     password: true,
     placeHolder: 'Your session token from cursor.com...',
-    validateInput: (v) => {
+    validateInput: (v: string) => {
       if (!v || v.length < 10) return 'Token appears too short. Please enter a valid session token.';
       return null;
     }
@@ -64,7 +64,12 @@ export async function activate(context: vscode.ExtensionContext) {
       refresh: async (mode) => {
         const now = Date.now();
         const startMs = now - 24 * 60 * 60 * 1000;
-        await runSync(context, { mode, startMs, endMs: now });
+        // runSync now returns 0 gracefully if no credentials - no need to check
+        try {
+          await runSync(context, { mode, startMs, endMs: now });
+        } catch {
+          // best-effort sync, continue with refresh
+        }
         await checkBudgetsAndNotify();
         await dashboardProvider?.refresh();
       },
@@ -130,12 +135,31 @@ export async function activate(context: vscode.ExtensionContext) {
       await dashboardProvider?.refresh();
     }),
     vscode.commands.registerCommand('codemeter.refreshData', async () => {
+      // Check if credentials exist before showing sync progress
+      const mode = (context.globalState.get('connectorMode') as 'cursor-dashboard' | 'cursor-admin') || 'cursor-dashboard';
+      const hasCredentials = mode === 'cursor-admin'
+        ? Boolean(await context.secrets.get('cursor.adminApiKey'))
+        : Boolean(await context.secrets.get('cursor.sessionToken'));
+      
+      if (!hasCredentials) {
+        const action = await vscode.window.showInformationMessage(
+          'CodeMeter: No Cursor account connected. Connect your account to sync actual usage data, or continue using estimated costs.',
+          'Connect Cursor',
+          'Cancel'
+        );
+        if (action === 'Connect Cursor') {
+          await connectCursorSimple(context);
+          await dashboardProvider?.refresh();
+        }
+        return;
+      }
+
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'CodeMeter: syncing usage…' },
         async () => {
           const now = Date.now();
           const startMs = now - 24 * 60 * 60 * 1000;
-          const count = await runSync(context, { mode: 'cursor-dashboard', startMs, endMs: now });
+          const count = await runSync(context, { mode, startMs, endMs: now });
           await checkBudgetsAndNotify();
           await dashboardProvider?.refresh();
           await vscode.window.showInformationMessage(`CodeMeter: synced ${count} usage events.`);
@@ -150,7 +174,7 @@ export async function activate(context: vscode.ExtensionContext) {
         title: 'Cursor Admin API Key',
         prompt: 'Enter your Cursor Admin API key (stored securely in SecretStorage)',
         password: true,
-        validateInput: (v) => (v && v.length >= 8 ? null : 'Enter a valid key')
+        validateInput: (v: string) => (v && v.length >= 8 ? null : 'Enter a valid key')
       });
       if (!key) return;
       await context.secrets.store('cursor.adminApiKey', key);

@@ -4,14 +4,22 @@ import { AIInteractionRepository } from '@codemeter/database';
 import { AIInteraction, estimateTokensFromChars, calculateCost, DEFAULT_MODEL, CONTEXT_ESTIMATES } from '@codemeter/core';
 import { computeProjectIdentity } from './projectIdentity';
 
+// Output channel for debugging
+const outputChannel = vscode.window.createOutputChannel('CodeMeter');
+
+function log(message: string): void {
+  const timestamp = new Date().toISOString();
+  outputChannel.appendLine(`[${timestamp}] ${message}`);
+}
+
 /**
  * Configuration thresholds for detecting AI-generated content.
  */
 const DETECTION_CONFIG = {
   /** Minimum characters in an insertion to consider it possibly AI-generated */
-  MIN_CHARS: 50,
+  MIN_CHARS: 30,
   /** Minimum lines in an insertion to consider it possibly AI-generated */
-  MIN_LINES: 3,
+  MIN_LINES: 2,
   /** Maximum time between insertions to aggregate them (ms) */
   AGGREGATION_WINDOW_MS: 500,
   /** Debounce time before processing aggregated changes (ms) */
@@ -45,6 +53,8 @@ export class AIInteractionTracker implements vscode.Disposable {
 
   start(): void {
     this.updateProjectKey();
+    log(`AIInteractionTracker started. Project key: ${this.currentProjectKey}`);
+    outputChannel.show(true); // Show the output channel
 
     this.disposables.push(
       // Track document changes
@@ -107,16 +117,23 @@ export class AIInteractionTracker implements vscode.Disposable {
 
   private handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
     // Skip if no project context
-    if (!this.currentProjectKey) return;
+    if (!this.currentProjectKey) {
+      log(`Skipping change: no project key`);
+      return;
+    }
     
     // Skip non-file URIs (e.g., git, output)
-    if (event.document.uri.scheme !== 'file') return;
+    if (event.document.uri.scheme !== 'file') {
+      return;
+    }
 
     const now = Date.now();
     
     for (const change of event.contentChanges) {
       const text = change.text;
       const lineCount = text.split('\n').length;
+      
+      log(`Document change detected: ${text.length} chars, ${lineCount} lines in ${event.document.fileName}`);
       
       // Check if this looks like AI-generated content
       if (this.isPotentiallyAIGenerated(text, lineCount, now)) {
@@ -137,13 +154,20 @@ export class AIInteractionTracker implements vscode.Disposable {
     const charCount = text.length;
     
     // Size thresholds
-    if (charCount < DETECTION_CONFIG.MIN_CHARS) return false;
-    if (lineCount < DETECTION_CONFIG.MIN_LINES) return false;
+    if (charCount < DETECTION_CONFIG.MIN_CHARS) {
+      log(`  → Rejected: too few chars (${charCount} < ${DETECTION_CONFIG.MIN_CHARS})`);
+      return false;
+    }
+    if (lineCount < DETECTION_CONFIG.MIN_LINES) {
+      log(`  → Rejected: too few lines (${lineCount} < ${DETECTION_CONFIG.MIN_LINES})`);
+      return false;
+    }
     
     // Check insertion speed
     const timeSinceLastTyping = now - this.lastTypingTimestamp;
     if (timeSinceLastTyping < 1000 && this.recentTypingChars > 10) {
       // User was recently typing manually - probably not AI
+      log(`  → Rejected: recent typing detected (${this.recentTypingChars} chars)`);
       return false;
     }
     
@@ -154,7 +178,9 @@ export class AIInteractionTracker implements vscode.Disposable {
     // Code patterns that suggest AI generation
     const hasCodePatterns = this.hasCodePatterns(text);
     
-    return isInstantLargeInsertion || (hasCodePatterns && charCount > 200);
+    const result = isInstantLargeInsertion || (hasCodePatterns && charCount > 200);
+    log(`  → Detection result: ${result} (large=${isInstantLargeInsertion}, patterns=${hasCodePatterns}, chars=${charCount})`);
+    return result;
   }
 
   private hasCodePatterns(text: string): boolean {
@@ -189,6 +215,8 @@ export class AIInteractionTracker implements vscode.Disposable {
     if (this.pendingChanges.length === 0) return;
     if (!this.currentProjectKey) return;
 
+    log(`Flushing ${this.pendingChanges.length} pending changes for project ${this.currentProjectKey}`);
+
     // Aggregate nearby changes (they might be parts of one AI response)
     const aggregated = this.aggregateChanges(this.pendingChanges);
     this.pendingChanges = [];
@@ -198,8 +226,10 @@ export class AIInteractionTracker implements vscode.Disposable {
       if (interaction) {
         try {
           this.repo.create(interaction);
+          log(`✅ Saved AI interaction: ${interaction.type}, $${(interaction.estimatedCostCents / 100).toFixed(4)}`);
         } catch (e) {
           // best-effort, don't crash
+          log(`❌ Failed to save AI interaction: ${e}`);
           console.error('[CodeMeter] Failed to save AI interaction:', e);
         }
       }

@@ -123,10 +123,22 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       const aiRepo = new AIInteractionRepository();
       estimatedByProject = aiRepo.getAllProjectsSummary(weekStart, now);
       
-      // Get estimates for current project if known
-      const currentProjectKey = projects.find((p: any) => 
+      // Get estimates for current project - try multiple matching strategies
+      let currentProjectKey = projects.find((p: any) => 
         p.workspacePath === currentWorkspacePath
       )?.projectKey;
+      
+      // If no exact match, compute the project key directly from workspace path
+      if (!currentProjectKey && currentWorkspacePath) {
+        const { computeProjectIdentity } = await import('./projectIdentity');
+        const identity = computeProjectIdentity(currentWorkspacePath);
+        currentProjectKey = identity.projectKey;
+      }
+      
+      // If still no match but we have estimated data, use the first project with estimates
+      if (!currentProjectKey && estimatedByProject.length > 0) {
+        currentProjectKey = estimatedByProject[0].projectKey;
+      }
       
       if (currentProjectKey) {
         estimatedToday = aiRepo.getEstimatedCostSummary(currentProjectKey, dayStart, now);
@@ -451,11 +463,17 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
 
     <div id="vscodeNotice" class="card" style="display: none; background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.2);">
       <div style="font-size: 11px; color: var(--vscode-foreground);">
-        <strong>📊 Local Tracking Active</strong>
+        <strong>Local Tracking Active</strong>
         <p style="margin-top: 6px; color: var(--vscode-descriptionForeground);">
-          Estimated costs are tracked automatically. For exact usage data, 
-          use this extension in <strong>Cursor</strong> and connect your account.
+          Estimated costs are tracked automatically based on detected AI interactions.
         </p>
+        <p style="margin-top: 6px; color: var(--vscode-descriptionForeground);">
+          <em>Optional:</em> Connect a Cursor account for exact usage data from their API.
+        </p>
+      </div>
+      <div class="btn-row" style="margin-top: 10px;">
+        <button id="connectVscode" class="btn btn-secondary">Connect Cursor (Optional)</button>
+        <button id="budgetVscode" class="btn btn-secondary">Set Budget</button>
       </div>
     </div>
 
@@ -505,7 +523,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       </div>
       <div class="breakdown-grid">
         <div class="breakdown-item">
-          <span class="breakdown-type">💬 Chat</span>
+          <span class="breakdown-type">Chat</span>
           <span id="breakdownChat" class="breakdown-value">$0.00</span>
         </div>
         <div class="breakdown-item">
@@ -513,11 +531,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           <span id="breakdownCompletion" class="breakdown-value">$0.00</span>
         </div>
         <div class="breakdown-item">
-          <span class="breakdown-type">✏️ Inline Edits</span>
+          <span class="breakdown-type">Inline Edits</span>
           <span id="breakdownInline" class="breakdown-value">$0.00</span>
         </div>
         <div class="breakdown-item">
-          <span class="breakdown-type">❓ Other</span>
+          <span class="breakdown-type">Other</span>
           <span id="breakdownUnknown" class="breakdown-value">$0.00</span>
         </div>
       </div>
@@ -670,8 +688,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           var msg = event.data;
           if (!msg || msg.type !== 'state') return;
 
-          // IDE-specific UI
+          // IDE-specific UI - now supports VS Code with optional Cursor connection
           var isCursor = msg.ideType === 'cursor';
+          var hasCredentials = msg.sessionTokenSet;
           var cursorSection = $('cursorOnlySection');
           var vscodeNotice = $('vscodeNotice');
           var syncedCostsSection = $('syncedCostsSection');
@@ -679,12 +698,21 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           var syncBar = $('syncBar');
           
           if (isCursor) {
+            // Running in Cursor IDE
+            cursorSection.style.display = 'block';
+            vscodeNotice.style.display = 'none';
+            syncedCostsSection.style.display = 'block';
+            connectorSection.style.display = 'flex';
+            syncBar.style.display = 'flex';
+          } else if (hasCredentials) {
+            // Running in VS Code but with Cursor account connected
             cursorSection.style.display = 'block';
             vscodeNotice.style.display = 'none';
             syncedCostsSection.style.display = 'block';
             connectorSection.style.display = 'flex';
             syncBar.style.display = 'flex';
           } else {
+            // Running in VS Code without Cursor account (local tracking only)
             cursorSection.style.display = 'none';
             vscodeNotice.style.display = 'block';
             syncedCostsSection.style.display = 'none';
@@ -742,6 +770,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         $('review').onclick = function() { vscode.postMessage({ type: 'reviewAttribution' }); };
         $('projectSelect').onchange = function() { vscode.postMessage({ type: 'selectProject', projectKey: $('projectSelect').value }); };
         $('connectorMode').onchange = function() { vscode.postMessage({ type: 'setConnectorMode', mode: $('connectorMode').value }); };
+        
+        // VS Code specific buttons (optional Cursor connection)
+        if ($('connectVscode')) {
+          $('connectVscode').onclick = function() { vscode.postMessage({ type: 'connectCursor' }); };
+        }
+        if ($('budgetVscode')) {
+          $('budgetVscode').onclick = function() { vscode.postMessage({ type: 'setBudget' }); };
+        }
 
         vscode.postMessage({ type: 'ready' });
       })();
