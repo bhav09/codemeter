@@ -35,18 +35,20 @@ export async function runSync(context: vscode.ExtensionContext, opts: SyncOption
   let lastError: string | undefined;
   try {
     if (opts.mode === 'cursor-dashboard') {
-    const sessionToken = await context.secrets.get('cursor.sessionToken');
-    if (!sessionToken) {
-      throw new Error('Cursor session token not set. Run “CodeMeter: Connect Cursor Account”.');
-    }
-    const client = new CursorDashboardClient(sessionToken, { includeRaw: false });
+      const sessionToken = await context.secrets.get('cursor.sessionToken');
+      if (!sessionToken) {
+        // No credentials - Cursor integration is optional, return gracefully
+        return 0;
+      }
+      const client = new CursorDashboardClient(sessionToken, { includeRaw: false });
       events = await client.fetchUsageEvents({ startMs: effectiveStartMs, endMs: opts.endMs });
     } else {
-    const adminKey = await context.secrets.get('cursor.adminApiKey');
-    if (!adminKey) {
-      throw new Error('Cursor Admin API key not set.');
-    }
-    const client = new CursorAdminClient(adminKey, { includeRaw: false });
+      const adminKey = await context.secrets.get('cursor.adminApiKey');
+      if (!adminKey) {
+        // No credentials - Cursor integration is optional, return gracefully
+        return 0;
+      }
+      const client = new CursorAdminClient(adminKey, { includeRaw: false });
       events = await client.fetchUsageEvents({ startMs: effectiveStartMs, endMs: opts.endMs });
     }
   } catch (e: any) {

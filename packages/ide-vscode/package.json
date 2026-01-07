@@ -42,31 +42,31 @@
     "commands": [
       {
         "command": "codemeter.showDashboard",
-        "title": "Show Cost Dashboard"
+        "title": "CodeMeter: Show Cost Dashboard"
       },
       {
         "command": "codemeter.connectCursor",
-        "title": "Connect Cursor Account"
+        "title": "CodeMeter: Connect Cursor Account"
       },
       {
         "command": "codemeter.disconnectCursor",
-        "title": "Disconnect Cursor Account"
+        "title": "CodeMeter: Disconnect Cursor Account"
       },
       {
         "command": "codemeter.refreshData",
-        "title": "Refresh Usage Data"
+        "title": "CodeMeter: Refresh Usage Data"
       },
       {
         "command": "codemeter.setProjectBudget",
-        "title": "Set Project Monthly Budget"
+        "title": "CodeMeter: Set Project Monthly Budget"
       },
       {
         "command": "codemeter.setAdminApiKey",
-        "title": "Set Cursor Admin API Key (Teams/Enterprise)"
+        "title": "CodeMeter: Set Cursor Admin API Key (Teams/Enterprise)"
       },
       {
         "command": "codemeter.reviewAttribution",
-        "title": "Review Unattributed / Low-Confidence Events"
+        "title": "CodeMeter: Review Unattributed / Low-Confidence Events"
       }
     ],
     "views": {
