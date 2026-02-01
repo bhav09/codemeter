@@ -2,16 +2,16 @@
 
 CodeMeter gives you fast, local-first insight into how much AI assistance costs while you code.
 
-Why it matters
+### Why it matters
 - Track AI usage per project so you can see which tools and models are driving cost.
 - Helpful for individuals and teams to budget and audit AI-assisted development.
 
-What it does
+### What it does
 - Detects AI-generated insertions (completions, inline edits, chat outputs).
 - Estimates tokens from inserted characters and converts tokens → cost using model pricing.
 - Stores usage per-project (`.codemeter`), supports multi-root workspaces, and offers a dashboard.
 
-Quick start
+### Quick start
 1. Install the extension in VS Code.
 2. Open a project folder and open the CodeMeter Dashboard view.
 3. Optionally set `codemeter.codemeterPath` in workspace settings to customize storage.
@@ -19,11 +19,14 @@ Quick start
 <img width="928" height="940" alt="Screenshot 2026-02-01 at 2 10 16 PM" src="https://github.com/user-attachments/assets/736b24c1-dc68-438f-b779-754f19f01806" />
 
 
-Privacy
+### Privacy
 - CodeMeter stores only estimated token counts and metadata locally. It does NOT upload your source code.
 
-Learn more
+### Learn more
 - Detailed token accounting: `TOKEN_ACCOUNTING.md`
 
-Feedback & Contribution
+### Feedback & Contribution
 - Issues and PRs: https://github.com/bhav09/codemeter
+
+### Contributor
+- Aakriti Aggarwal ([LinkedIn](https://www.linkedin.com/in/aakritiaggarwal13/) / [Github](https://github.com/aakriti1318))
