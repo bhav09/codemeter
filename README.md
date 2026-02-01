@@ -16,6 +16,9 @@ Quick start
 2. Open a project folder and open the CodeMeter Dashboard view.
 3. Optionally set `codemeter.codemeterPath` in workspace settings to customize storage.
 
+<img width="928" height="940" alt="Screenshot 2026-02-01 at 2 10 16 PM" src="https://github.com/user-attachments/assets/736b24c1-dc68-438f-b779-754f19f01806" />
+
+
 Privacy
 - CodeMeter stores only estimated token counts and metadata locally. It does NOT upload your source code.
 
