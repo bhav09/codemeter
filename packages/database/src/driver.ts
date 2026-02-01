@@ -19,6 +19,9 @@ export interface StorageDriver {
  */
 export class JsonlStorageDriver implements StorageDriver {
   append(kind: StoreKind, record: unknown): void {
+    // Ensure directory exists
+    getDatabaseDir();
+    
     const file = getStoreFile(kind);
     const line = JSON.stringify(record) + '\n';
     fs.appendFileSync(file, line, { encoding: 'utf8' });

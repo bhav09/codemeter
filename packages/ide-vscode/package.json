@@ -68,6 +68,11 @@
         "command": "codemeter.reviewAttribution",
         "title": "CodeMeter: Review Unattributed / Low-Confidence Events"
       }
+      ,
+      {
+        "command": "codemeter.showStoragePath",
+        "title": "CodeMeter: Show Storage Path"
+      }
     ],
     "views": {
       "codemeter": [
@@ -95,6 +100,12 @@
           "type": "boolean",
           "default": true,
           "description": "Enable budget alerts/notifications"
+        }
+        ,
+        "codemeter.codemeterPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional override path for CodeMeter storage. Supports ${workspaceFolder}, ${home}, and ${env:VAR}."
         }
       }
     }

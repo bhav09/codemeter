@@ -1,27 +1,26 @@
-# CodeMeter - AI Coding Cost Tracker
+# CodeMeter — Track AI-generated code & estimate its cost
 
-**CodeMeter** provides **project-level cost tracking** for AI coding agents. It attributes your Cursor usage to specific projects, giving you clear insights into your AI spending across different workspaces.
+CodeMeter gives you fast, local-first insight into how much AI assistance costs while you code.
 
-## Features
+Why it matters
+- Track AI usage per project so you can see which tools and models are driving cost.
+- Helpful for individuals and teams to budget and audit AI-assisted development.
 
-- **Project-Level Costs**: Automatically tracks which project you are working on and attributes costs accordingly.
-- **Budget Alerts**: Set monthly budgets per project and get notified when you're close to the limit.
-- **Cross-IDE Support**: Works seamlessly across VS Code, Cursor, and other forks.
-- **Dashboard**: Built-in Activity Bar dashboard to visualize daily/weekly costs and top models.
+What it does
+- Detects AI-generated insertions (completions, inline edits, chat outputs).
+- Estimates tokens from inserted characters and converts tokens → cost using model pricing.
+- Stores usage per-project (`.codemeter`), supports multi-root workspaces, and offers a dashboard.
 
-## How to cleaning
+Quick start
+1. Install the extension in VS Code.
+2. Open a project folder and open the CodeMeter Dashboard view.
+3. Optionally set `codemeter.codemeterPath` in workspace settings to customize storage.
 
-1. **Install**: Get CodeMeter from the VS Code Marketplace or Open VSX.
-2. **Connect Account**:
-   - Open the **CodeMeter** tab in the Activity Bar.
-   - Click **Connect Cursor** (uses your existing browser session).
-   - *Enterprise Users*: You can also provide an Admin API Key via the command `CodeMeter: Set Cursor Admin API Key`.
-3. **Start Coding**: CodeMeter runs in the background. Check the dashboard anytime to see your usage.
+Privacy
+- CodeMeter stores only estimated token counts and metadata locally. It does NOT upload your source code.
 
-## Support
+Learn more
+- Detailed token accounting: `TOKEN_ACCOUNTING.md`
 
-For issues or feature requests, visit our [GitHub Repository](https://github.com/bhav09/codemeter).
-
----
-
-*Note: CodeMeter runs locally on your machine and communicates directly with Cursor's APIs. Your tokens are stored securely in VS Code's SecretStorage.*
+Feedback & Contribution
+- Issues and PRs: https://github.com/bhav09/codemeter

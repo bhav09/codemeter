@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { v4 as uuidv4 } from 'uuid';
-import { AIInteractionRepository } from '@codemeter/database';
+import { AIInteractionRepository, setDatabaseDir } from '@codemeter/database';
 import { AIInteraction, estimateTokensFromChars, calculateCost, DEFAULT_MODEL, CONTEXT_ESTIMATES } from '@codemeter/core';
 import { computeProjectIdentity } from './projectIdentity';
+import { getCurrentWorkspaceConfig, onWorkspaceConfigChange } from './workspaceConfig';
 
 // Output channel for debugging
 const outputChannel = vscode.window.createOutputChannel('CodeMeter');
@@ -16,10 +17,6 @@ function log(message: string): void {
  * Configuration thresholds for detecting AI-generated content.
  */
 const DETECTION_CONFIG = {
-  /** Minimum characters in an insertion to consider it possibly AI-generated */
-  MIN_CHARS: 30,
-  /** Minimum lines in an insertion to consider it possibly AI-generated */
-  MIN_LINES: 2,
   /** Maximum time between insertions to aggregate them (ms) */
   AGGREGATION_WINDOW_MS: 500,
   /** Debounce time before processing aggregated changes (ms) */
@@ -53,6 +50,7 @@ export class AIInteractionTracker implements vscode.Disposable {
 
   start(): void {
     this.updateProjectKey();
+    this.initializeWorkspaceConfig();
     log(`AIInteractionTracker started. Project key: ${this.currentProjectKey}`);
     outputChannel.show(true); // Show the output channel
 
@@ -62,9 +60,10 @@ export class AIInteractionTracker implements vscode.Disposable {
         this.handleDocumentChange(event);
       }),
       
-      // Track workspace changes to update project key
+      // Track workspace changes to update project key and database dir
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.updateProjectKey();
+        this.initializeWorkspaceConfig();
       }),
 
       // Track typing to estimate typing speed
@@ -73,7 +72,13 @@ export class AIInteractionTracker implements vscode.Disposable {
       }),
 
       // Detect Cursor-specific AI commands (if available)
-      ...this.registerAICommandListeners()
+      ...this.registerAICommandListeners(),
+
+      // Listen for workspace config changes (e.g., multi-root folder added/removed)
+      onWorkspaceConfigChange((config) => {
+        log(`Workspace config changed: ${config.displayName} at ${config.codemeterDir}`);
+        setDatabaseDir(config.codemeterDir);
+      })
     );
   }
 
@@ -94,6 +99,12 @@ export class AIInteractionTracker implements vscode.Disposable {
       const identity = computeProjectIdentity(primary);
       this.currentProjectKey = identity.projectKey;
     }
+  }
+
+  private initializeWorkspaceConfig(): void {
+    const config = getCurrentWorkspaceConfig();
+    setDatabaseDir(config.codemeterDir);
+    log(`Initialized workspace config: ${config.displayName} → ${config.codemeterDir}`);
   }
 
   private trackTypingSpeed(event: vscode.TextDocumentChangeEvent): void {
@@ -153,13 +164,8 @@ export class AIInteractionTracker implements vscode.Disposable {
   private isPotentiallyAIGenerated(text: string, lineCount: number, now: number): boolean {
     const charCount = text.length;
     
-    // Size thresholds
-    if (charCount < DETECTION_CONFIG.MIN_CHARS) {
-      log(`  → Rejected: too few chars (${charCount} < ${DETECTION_CONFIG.MIN_CHARS})`);
-      return false;
-    }
-    if (lineCount < DETECTION_CONFIG.MIN_LINES) {
-      log(`  → Rejected: too few lines (${lineCount} < ${DETECTION_CONFIG.MIN_LINES})`);
+    // Skip empty text
+    if (charCount === 0) {
       return false;
     }
     
@@ -178,8 +184,10 @@ export class AIInteractionTracker implements vscode.Disposable {
     // Code patterns that suggest AI generation
     const hasCodePatterns = this.hasCodePatterns(text);
     
-    const result = isInstantLargeInsertion || (hasCodePatterns && charCount > 200);
-    log(`  → Detection result: ${result} (large=${isInstantLargeInsertion}, patterns=${hasCodePatterns}, chars=${charCount})`);
+    // Allow tracking of any AI-generated content, even small batches
+    // This enables proper cost calculation for AI responses sent in multiple chunks
+    const result = isInstantLargeInsertion || hasCodePatterns || charCount > 0;
+    log(`  → Detection result: ${result} (chars=${charCount}, lines=${lineCount}, patterns=${hasCodePatterns})`);
     return result;
   }
 
@@ -247,14 +255,26 @@ export class AIInteractionTracker implements vscode.Disposable {
       const lastGroup = groups[groups.length - 1];
       const lastChange = lastGroup[lastGroup.length - 1];
       
+      // Edge case: very close timestamps (within aggregation window)
+      // typically indicates batched AI output
       if (current.timestampMs - lastChange.timestampMs < DETECTION_CONFIG.AGGREGATION_WINDOW_MS) {
         lastGroup.push(current);
       } else {
+        // New interaction group
         groups.push([current]);
       }
     }
     
-    return groups;
+    // Filter out very small groups that might be noise
+    // (less than 10 chars total is likely not meaningful AI interaction)
+    return groups.filter(group => {
+      const totalChars = group.reduce((sum, c) => sum + c.insertedText.length, 0);
+      if (totalChars < 1) {
+        log(`  → Filtered out empty group`);
+        return false;
+      }
+      return true;
+    });
   }
 
   private createInteraction(changes: PendingChange[], projectKey: string): AIInteraction | null {
@@ -264,15 +284,26 @@ export class AIInteractionTracker implements vscode.Disposable {
     const totalLines = changes.reduce((sum, c) => sum + c.lineCount, 0);
     const firstTimestamp = changes[0].timestampMs;
 
+    // Edge case: empty after aggregation (shouldn't happen, but defensive)
+    if (totalChars === 0) {
+      log(`  → Skipped: aggregated group has 0 chars`);
+      return null;
+    }
+
     // Determine interaction type based on size and patterns
     const type = this.inferInteractionType(changes);
 
     // Estimate tokens
+    // Output tokens: direct from observed insertion
     const outputTokens = estimateTokensFromChars(totalChars, true);
+    
+    // Input tokens: estimated based on interaction type and context
     const inputTokens = this.estimateInputTokens(type, totalChars);
 
-    // Calculate estimated cost
+    // Calculate estimated cost (model-dependent)
     const estimatedCost = calculateCost(inputTokens, outputTokens, DEFAULT_MODEL);
+
+    log(`  ✓ Interaction created: ${type}, ${totalChars} chars, ${outputTokens} output tokens, $${(estimatedCost / 100).toFixed(4)}`);
 
     return {
       id: uuidv4(),
@@ -291,22 +322,40 @@ export class AIInteractionTracker implements vscode.Disposable {
     const totalChars = changes.reduce((sum, c) => sum + c.insertedText.length, 0);
     const totalLines = changes.reduce((sum, c) => sum + c.lineCount, 0);
     const combinedText = changes.map(c => c.insertedText).join('\n');
+    const hasPatterns = this.hasCodePatterns(combinedText);
 
-    // Large multi-file or very large insertions suggest chat
+    // CHAT: Large responses, typically multi-line or multi-file
+    // - Often from /explain, /fix, /implement commands
+    // - Can have mixed output (code + comments + explanations)
     if (totalChars > 1000 || totalLines > 30) {
       return 'chat';
     }
 
-    // Medium-sized code blocks with function/class patterns suggest inline edit
-    if (totalLines >= 5 && this.hasCodePatterns(combinedText)) {
+    // INLINE-EDIT: Targeted code modifications
+    // - Medium-sized blocks (200-1000 chars)
+    // - Has code structure (functions, classes, etc.)
+    // - Single logical change
+    if (totalLines >= 5 && totalChars >= 200 && hasPatterns) {
       return 'inline-edit';
     }
 
-    // Smaller completions
-    if (totalLines < 10 && totalChars < 500) {
+    // COMPLETION: Quick suggestions and auto-completions
+    // - Typically small (<500 chars)
+    // - Often a single line or function stub
+    // - May or may not have code patterns
+    if (totalChars < 500 && totalLines < 10) {
       return 'completion';
     }
 
+    // EDGE CASE: Very small insertions with code patterns
+    // - Likely a code snippet or partial statement
+    // - Treat as completion since it's minimal
+    if (totalChars < 200 && hasPatterns) {
+      return 'completion';
+    }
+
+    // FALLBACK: Unknown type for anything that doesn't fit above
+    // Use conservative estimate
     return 'unknown';
   }
 

@@ -2,7 +2,29 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 
+/**
+ * Override the default database directory.
+ * Useful for supporting multi-root workspaces where each project
+ * stores its own .codemeter data.
+ *
+ * Call this before any database operations if you want custom storage.
+ */
+let customDatabaseDir: string | null = null;
+
+export function setDatabaseDir(dir: string): void {
+  customDatabaseDir = dir;
+}
+
 export function getDatabaseDir(): string {
+  // Use custom directory if set (for workspace-specific storage)
+  if (customDatabaseDir) {
+    if (!fs.existsSync(customDatabaseDir)) {
+      fs.mkdirSync(customDatabaseDir, { recursive: true });
+    }
+    return customDatabaseDir;
+  }
+
+  // Default: ~/.codemeter
   const homeDir = os.homedir();
   const codemeterDir = path.join(homeDir, '.codemeter');
   

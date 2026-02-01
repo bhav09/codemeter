@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ProjectSessionTracker } from './sessionTracker';
 import { AIInteractionTracker } from './aiTracker';
+import { getCurrentWorkspaceConfig } from './workspaceConfig';
 import { showDashboard } from './dashboardWebview';
 import { runSync } from './sync';
 import { checkBudgetsAndNotify, setBudgetForCurrentProject } from './budgets';
@@ -182,6 +183,23 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('codemeter.reviewAttribution', async () => {
       await reviewAttribution();
+    })
+    ,
+    vscode.commands.registerCommand('codemeter.showStoragePath', async () => {
+      try {
+        const cfg = getCurrentWorkspaceConfig();
+        const display = `CodeMeter storage path:\n${cfg.codemeterDir}`;
+        const choice = await vscode.window.showInformationMessage(display, 'Open Folder', 'Show in Output');
+        if (choice === 'Open Folder') {
+          await vscode.env.openExternal(vscode.Uri.file(cfg.codemeterDir));
+        } else if (choice === 'Show in Output') {
+          const out = vscode.window.createOutputChannel('CodeMeter');
+          out.show(true);
+          out.appendLine(`Resolved CodeMeter storage: ${cfg.codemeterDir}`);
+        }
+      } catch (e) {
+        await vscode.window.showErrorMessage(`CodeMeter: failed to resolve storage path: ${e}`);
+      }
     })
   );
 
