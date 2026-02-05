@@ -131,7 +131,7 @@
     "@types/node": "^20.0.0",
     "@types/uuid": "^9.0.0",
     "@types/vscode": "^1.74.0",
-    "esbuild": "^0.20.2",
+    "esbuild": "^0.25.0",
     "typescript": "^5.0.0",
     "vsce": "^2.15.0"
   }
