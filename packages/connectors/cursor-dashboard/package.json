@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@codemeter/core": "^0.1.0",
-    "axios": "^1.6.0"
+    "axios": "^1.13.5"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
