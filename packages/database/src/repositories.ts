@@ -1,7 +1,7 @@
 import { UsageEvent, ProjectSession, AttributionRecord, Project, Budget, SyncState, AIInteraction, EstimatedCostSummary } from '@codemeter/core';
 import { StoreKind } from './schema';
 import { StorageDriver, getStorageDriver } from './driver';
-import { readJsonDerived } from './schema';
+import { readJsonDerived, writeJsonDerived } from './schema';
 
 type ProjectRecord = { type: 'upsert'; project: Project };
 type SessionRecord =
@@ -349,10 +349,14 @@ export class MaintenanceRepository {
   compactAll(): void {
     const kinds: StoreKind[] = ['projects', 'sessions', 'events', 'attributions', 'budgets', 'sync_state', 'ai_interactions'];
     for (const k of kinds) this.driver.compact(k);
+    rebuildAISummary(this.driver);
   }
 
   compact(kind: StoreKind): void {
     this.driver.compact(kind);
+    if (kind === 'ai_interactions') {
+      rebuildAISummary(this.driver);
+    }
   }
 }
 
@@ -363,6 +367,7 @@ export class AIInteractionRepository {
 
   create(interaction: AIInteraction): void {
     this.driver.append('ai_interactions', { type: 'create', interaction } satisfies AIInteractionLine);
+    rebuildAISummary(this.driver);
   }
 
   getAll(): AIInteraction[] {
@@ -450,4 +455,98 @@ export class AIInteractionRepository {
       }))
       .sort((a, b) => b.totalEstimatedCents - a.totalEstimatedCents);
   }
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export function rebuildAISummary(driver: StorageDriver = getStorageDriver()): void {
+  const records = driver.readAll<AIInteractionLine>('ai_interactions');
+  const interactions = records
+    .filter(r => r?.type === 'create' && r?.interaction?.id)
+    .map(r => r.interaction);
+
+  const byProject: Record<string, {
+    totalCostCents: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalInteractions: number;
+    byModel: Record<string, { interactions: number; costCents: number; inputTokens: number; outputTokens: number }>;
+    byEditor: Record<string, { interactions: number; costCents: number }>;
+  }> = {};
+  const byDayMap: Record<string, { costCents: number; interactions: number }> = {};
+
+  let totalCostCents = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  for (const i of interactions) {
+    const project = i.projectKey || 'unknown';
+    const model = i.detectedModel || i.assumedModel || 'unknown';
+    const editor = i.editor || 'unknown';
+    const day = new Date(i.timestampMs).toISOString().slice(0, 10);
+
+    totalCostCents += i.estimatedCostCents || 0;
+    totalInputTokens += i.estimatedInputTokens || 0;
+    totalOutputTokens += i.estimatedOutputTokens || 0;
+
+    const p = byProject[project] ??= {
+      totalCostCents: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalInteractions: 0,
+      byModel: {},
+      byEditor: {},
+    };
+
+    p.totalCostCents += i.estimatedCostCents || 0;
+    p.totalInputTokens += i.estimatedInputTokens || 0;
+    p.totalOutputTokens += i.estimatedOutputTokens || 0;
+    p.totalInteractions += 1;
+
+    const pm = p.byModel[model] ??= { interactions: 0, costCents: 0, inputTokens: 0, outputTokens: 0 };
+    pm.interactions += 1;
+    pm.costCents += i.estimatedCostCents || 0;
+    pm.inputTokens += i.estimatedInputTokens || 0;
+    pm.outputTokens += i.estimatedOutputTokens || 0;
+
+    const pe = p.byEditor[editor] ??= { interactions: 0, costCents: 0 };
+    pe.interactions += 1;
+    pe.costCents += i.estimatedCostCents || 0;
+
+    const d = byDayMap[day] ??= { costCents: 0, interactions: 0 };
+    d.costCents += i.estimatedCostCents || 0;
+    d.interactions += 1;
+  }
+
+  for (const project of Object.values(byProject)) {
+    project.totalCostCents = round2(project.totalCostCents);
+    for (const model of Object.values(project.byModel)) {
+      model.costCents = round2(model.costCents);
+    }
+    for (const editor of Object.values(project.byEditor)) {
+      editor.costCents = round2(editor.costCents);
+    }
+  }
+
+  const byDay = Object.entries(byDayMap)
+    .map(([date, v]) => ({
+      date,
+      costCents: round2(v.costCents),
+      interactions: v.interactions,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  writeJsonDerived('ai_summary', {
+    lastUpdated: new Date().toISOString(),
+    totals: {
+      totalCostCents: round2(totalCostCents),
+      totalInputTokens,
+      totalOutputTokens,
+      totalInteractions: interactions.length,
+    },
+    byProject,
+    byDay,
+  });
 }

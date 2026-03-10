@@ -116,6 +116,10 @@ export interface AIInteraction {
   charCount: number;
   /** Assumed model for cost calculation */
   assumedModel: string;
+  /** Auto-detected model from the host editor (if available) */
+  detectedModel?: string;
+  /** Host editor that generated this interaction */
+  editor?: 'cursor' | 'windsurf' | 'antigravity' | 'vscode' | 'claude-code' | 'unknown';
 }
 
 /**

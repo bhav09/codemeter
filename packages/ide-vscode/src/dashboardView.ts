@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'crypto';
 import { AnalyticsRepository, ProjectRepository, SyncStateRepository, AIInteractionRepository } from '@codemeter/database';
+import { getPricingService } from '@codemeter/core';
 
 type DashboardMessage =
   | { type: 'ready' }
@@ -94,6 +96,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     let estimatedWeek: any = null;
     let estimatedMonth: any = null;
     let estimatedByProject: any[] = [];
+    let recentInteractions: any[] = [];
 
     // Get current workspace info
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -102,8 +105,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
 
     // Detect IDE type for context-aware UI
     const appName = (vscode.env.appName || '').toLowerCase();
-    const ideType: 'cursor' | 'vscode' | 'antigravity' = 
+    const ideType: 'cursor' | 'vscode' | 'antigravity' | 'windsurf' = 
       appName.includes('cursor') ? 'cursor' :
+      appName.includes('windsurf') ? 'windsurf' :
       appName.includes('antigravity') ? 'antigravity' : 'vscode';
 
     try {
@@ -146,6 +150,23 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         estimatedMonth = aiRepo.getEstimatedCostSummary(currentProjectKey, monthStart, now);
       }
 
+      // Recent individual queries for per-query cost visibility (last 20)
+      const recentKey = currentProjectKey;
+      if (recentKey) {
+        const recentRaw = aiRepo.getByProjectKey(recentKey, weekStart, now);
+        recentInteractions = recentRaw.slice(0, 20).map((i: any) => ({
+          id: i.id,
+          timestampMs: i.timestampMs,
+          type: i.type,
+          model: i.detectedModel || i.assumedModel,
+          editor: i.editor || 'unknown',
+          inputTokens: i.estimatedInputTokens,
+          outputTokens: i.estimatedOutputTokens,
+          costCents: i.estimatedCostCents,
+          charCount: i.charCount,
+        }));
+      }
+
       this.lastUiError = null;
     } catch (e: any) {
       this.lastUiError = String(e?.message || e);
@@ -170,6 +191,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     }
 
     const sessionTokenSet = Boolean(await this.context.secrets.get('cursor.sessionToken'));
+
+    const svc = getPricingService();
+    const assumedModel = vscode.workspace.getConfiguration('codemeter').get<string>('assumedModel') || 'claude-sonnet-4.6';
+    const latestDetectedModel = recentInteractions[0]?.model || null;
+    const latestEditor = recentInteractions[0]?.editor || null;
 
     await this.view.webview.postMessage({
       type: 'state',
@@ -197,12 +223,20 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         month: estimatedMonth,
         byProject: estimatedByProject
       },
+      recentInteractions,
+      pricing: {
+        isLive: svc.isLive,
+        date: svc.pricingDate,
+        assumedModel,
+        detectedModel: latestDetectedModel,
+        editor: latestEditor,
+      },
       uiError: this.lastUiError
     });
   }
 
   private renderHtml(_webview: vscode.Webview): string {
-    const nonce = String(Math.random()).slice(2);
+    const nonce = randomBytes(16).toString('base64');
     const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
 
     return `<!doctype html>
@@ -346,6 +380,52 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         font-style: italic;
         margin-top: 8px;
       }
+
+      /* Pricing status */
+      .pricing-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+        padding: 6px 10px;
+        border-radius: 4px;
+        margin-bottom: 12px;
+      }
+      .pricing-status.live { background: rgba(34,197,94,0.1); }
+      .pricing-status.fallback { background: rgba(245,158,11,0.1); }
+      .pricing-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+      .pricing-dot.live { background: #22c55e; }
+      .pricing-dot.fallback { background: #f59e0b; }
+
+      /* Recent queries */
+      .query-row {
+        display: grid;
+        grid-template-columns: 56px 70px 1.2fr 1fr auto;
+        gap: 6px;
+        padding: 8px 6px;
+        font-size: 11px;
+        border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.05));
+        align-items: center;
+      }
+      .query-row:hover { background: rgba(255,255,255,0.02); }
+      .query-row-header {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--vscode-descriptionForeground);
+        border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+      }
+      .query-time { color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
+      .query-type { font-weight: 500; }
+      .query-type.chat { color: #3b82f6; }
+      .query-type.completion { color: #22c55e; }
+      .query-type.inline-edit { color: #a855f7; }
+      .query-type.unknown { color: var(--vscode-descriptionForeground); }
+      .query-tokens { color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; font-size: 10px; }
+      .query-cost { font-weight: 600; color: #f59e0b; font-variant-numeric: tabular-nums; text-align: right; }
+      .query-model { color: var(--vscode-descriptionForeground); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .breakdown-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
       .breakdown-item { 
         display: flex; 
@@ -498,6 +578,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       <span id="syncText">Last sync: Never</span>
     </div>
 
+    <div id="pricingStatus" class="pricing-status live">
+      <span class="pricing-dot live"></span>
+      <span id="pricingText">Pricing: loading...</span>
+    </div>
+
     <div class="section-header">Estimated AI Costs (Local Tracking)</div>
     <div id="estimatedCard" class="card estimated-card">
       <div class="estimated-header">
@@ -541,6 +626,20 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
       </div>
       <div class="estimated-note">
         Estimates based on detected AI interactions. Actual costs may vary.
+      </div>
+    </div>
+
+    <div class="section-header">Recent Queries</div>
+    <div class="card">
+      <div class="query-row query-row-header">
+        <span>Time</span>
+        <span>Type</span>
+        <span>Model / Editor</span>
+        <span>Tokens (in/out)</span>
+        <span>Cost</span>
+      </div>
+      <div id="recentQueries">
+        <div class="query-row"><span class="empty-row" style="grid-column: 1/-1;">No queries yet.</span></div>
       </div>
     </div>
 
@@ -655,6 +754,52 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           }
         }
 
+        function renderPricingStatus(pricing) {
+          var el = $('pricingStatus');
+          var text = $('pricingText');
+          var dot = el.querySelector('.pricing-dot');
+          if (!pricing) return;
+          if (pricing.isLive) {
+            el.className = 'pricing-status live';
+            dot.className = 'pricing-dot live';
+            text.textContent = 'Live pricing (' + (pricing.date || 'loading') + ') — Model: ' + (pricing.detectedModel || pricing.assumedModel) + (pricing.editor ? (' via ' + pricing.editor) : '');
+          } else {
+            el.className = 'pricing-status fallback';
+            dot.className = 'pricing-dot fallback';
+            text.textContent = 'Bundled pricing (offline) — Model: ' + (pricing.detectedModel || pricing.assumedModel) + (pricing.editor ? (' via ' + pricing.editor) : '');
+          }
+        }
+
+        function fmtTime(ms) {
+          var d = new Date(ms);
+          var h = d.getHours();
+          var m = d.getMinutes();
+          return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+        }
+
+        function fmtTokens(n) {
+          if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+          return String(n);
+        }
+
+        function renderRecentQueries(interactions) {
+          var el = $('recentQueries');
+          if (!interactions || interactions.length === 0) {
+            el.innerHTML = '<div class="query-row"><span class="empty-row" style="grid-column: 1/-1;">No queries yet.</span></div>';
+            return;
+          }
+          el.innerHTML = interactions.map(function(q) {
+            var typeClass = 'query-type ' + (q.type || 'unknown');
+            return '<div class="query-row">' +
+              '<span class="query-time">' + fmtTime(q.timestampMs) + '</span>' +
+              '<span class="' + typeClass + '">' + esc(q.type) + '</span>' +
+              '<span class="query-model">' + esc((q.model || 'unknown') + ' / ' + (q.editor || 'unknown')) + '</span>' +
+              '<span class="query-tokens">' + fmtTokens(q.inputTokens) + ' / ' + fmtTokens(q.outputTokens) + '</span>' +
+              '<span class="query-cost">' + fmtMoney(q.costCents) + '</span>' +
+            '</div>';
+          }).join('');
+        }
+
         function renderEstimated(est) {
           if (!est) return;
           
@@ -724,7 +869,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           var authEl = $('authStatus');
           if (!isCursor) {
             authEl.className = 'status connected';
-            authEl.innerHTML = '<span class="status-dot"></span><span>' + (msg.ideType === 'vscode' ? 'VS Code' : 'Antigravity') + '</span>';
+            authEl.innerHTML = '<span class="status-dot"></span><span>' +
+              (msg.ideType === 'vscode' ? 'VS Code' : (msg.ideType === 'windsurf' ? 'Windsurf' : 'Antigravity')) +
+              '</span>';
           } else if (msg.sessionTokenSet) {
             authEl.className = 'status connected';
             authEl.innerHTML = '<span class="status-dot"></span><span>Connected</span>';
@@ -740,8 +887,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           // Connector
           $('connectorMode').value = msg.connectorMode || 'cursor-dashboard';
 
+          // Pricing status
+          renderPricingStatus(msg.pricing);
+
           // Estimated costs (local tracking)
           renderEstimated(msg.estimated);
+
+          // Recent individual queries
+          renderRecentQueries(msg.recentInteractions);
 
           // Synced stats
           var todayTotal = sumCents(msg.totals && msg.totals.today);

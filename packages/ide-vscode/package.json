@@ -2,7 +2,7 @@
   "name": "codemeter",
   "displayName": "CodeMeter - AI Coding Cost Tracker",
   "description": "Track AI coding agent usage and costs across projects and IDEs",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "BhavishyaPandit9",
   "repository": {
     "type": "git",
@@ -102,6 +102,47 @@
           "description": "Enable budget alerts/notifications"
         }
         ,
+        "codemeter.assumedModel": {
+          "type": "string",
+          "default": "claude-sonnet-4.6",
+          "enum": [
+            "claude-sonnet-4.6",
+            "claude-opus-4.6",
+            "claude-haiku-4.5",
+            "claude-sonnet-4.5",
+            "claude-opus-4.5",
+            "claude-sonnet-4",
+            "claude-haiku-3.5",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-5.4",
+            "o3-pro",
+            "o4-mini",
+            "cursor-small"
+          ],
+          "enumDescriptions": [
+            "Claude Sonnet 4.6 — $3/$15 per 1M tokens (default)",
+            "Claude Opus 4.6 — $5/$25 per 1M tokens",
+            "Claude Haiku 4.5 — $1/$5 per 1M tokens",
+            "Claude Sonnet 4.5 — $3/$15 per 1M tokens",
+            "Claude Opus 4.5 — $5/$25 per 1M tokens",
+            "Claude Sonnet 4 — $3/$15 per 1M tokens",
+            "Claude Haiku 3.5 — $0.80/$4 per 1M tokens",
+            "GPT-4.1 — $2/$8 per 1M tokens",
+            "GPT-4.1 Mini — $0.40/$1.60 per 1M tokens",
+            "GPT-4.1 Nano — $0.10/$0.40 per 1M tokens",
+            "GPT-4o — $2.50/$10 per 1M tokens",
+            "GPT-4o Mini — $0.15/$0.60 per 1M tokens",
+            "GPT-5.4 — $2.50/$15 per 1M tokens",
+            "o3-pro — $20/$80 per 1M tokens",
+            "o4-mini — $1.10/$4.40 per 1M tokens",
+            "cursor-small — Free (Cursor built-in)"
+          ],
+          "description": "The AI model your IDE is using. Costs are calculated based on this model's per-token pricing. Prices update automatically via live fetch; this setting controls which model to look up."
+        },
         "codemeter.codemeterPath": {
           "type": "string",
           "default": "",

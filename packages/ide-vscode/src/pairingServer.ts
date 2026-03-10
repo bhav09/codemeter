@@ -49,7 +49,7 @@ export async function startPairingServer(context: vscode.ExtensionContext): Prom
     res.json({ nonce, createdAt });
   });
 
-  app.post('/pair/submit', (req, res) => {
+  app.post('/pair/submit', async (req, res) => {
     const ip = req.ip || '';
     const isLocal =
       ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
@@ -75,11 +75,13 @@ export async function startPairingServer(context: vscode.ExtensionContext): Prom
       return;
     }
 
-    // Store token securely
-    void context.secrets.store('cursor.sessionToken', sessionToken);
-
-    res.json({ ok: true });
-    resolveToken?.({ sessionToken });
+    try {
+      await context.secrets.store('cursor.sessionToken', sessionToken);
+      res.json({ ok: true });
+      resolveToken?.({ sessionToken });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: 'Failed to store token securely' });
+    }
   });
 
   const server = await new Promise<ReturnType<Express['listen']>>((resolve, reject) => {

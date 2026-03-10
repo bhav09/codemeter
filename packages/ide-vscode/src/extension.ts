@@ -238,12 +238,18 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }, 4_000);
 
-  // Background polling
+  // Background polling (only runs sync when credentials exist)
   pollTimer = setInterval(async () => {
     try {
+      const mode = (context.globalState.get('connectorMode') as any) || 'cursor-dashboard';
+      const tokenOk =
+        mode === 'cursor-admin'
+          ? Boolean(await context.secrets.get('cursor.adminApiKey'))
+          : Boolean(await context.secrets.get('cursor.sessionToken'));
+      if (!tokenOk) return;
+
       const now = Date.now();
       const startMs = now - 60 * 60 * 1000;
-      const mode = (context.globalState.get('connectorMode') as any) || 'cursor-dashboard';
       await runSync(context, { mode, startMs, endMs: now });
       await checkBudgetsAndNotify();
       await dashboardProvider?.refresh();

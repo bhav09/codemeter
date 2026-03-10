@@ -202,6 +202,52 @@ Key observation: this repo uses **npm workspaces**, which installs internal pack
   - optionally run “Refresh usage” (should still work if auth is configured)
 - If anything regresses, rollback by republishing the prior VSIX (no data migration required).
 
+## ETB — Dynamic Per-Query Cost Tracking with Live Pricing & Model Detection
+
+### 1) User goal (1 sentence)
+Replace hardcoded stale pricing with live, daily-updated model prices via the `token-costs` package, detect the active model from editor configuration, show per-query cost with token breakdown in the dashboard, and ensure costs are recorded for every project.
+
+### 2) Mode
+[MVP] — dynamic pricing integration + model detection + dashboard enhancement.
+
+### 3) Code grounding (files to modify)
+- `packages/core/src/pricing.ts` — Replace hardcoded `MODEL_PRICING` with a `PricingService` class backed by `token-costs` `CostClient`. Keep bundled fallback prices for offline use. Export async `calculateCost()` that uses live prices.
+- `packages/core/src/types.ts` — Add `PricingProvider` type alias.
+- `packages/ide-vscode/src/aiTracker.ts` — Use `PricingService` for cost calculation. Read model from user setting instead of hardcoded `DEFAULT_MODEL`.
+- `packages/ide-vscode/src/dashboardView.ts` — Add "Recent Queries" section showing per-query: timestamp, type, model, input/output tokens, and cost.
+- `packages/ide-vscode/package.json` — Add `token-costs` dependency. Add `codemeter.assumedModel` setting with enum of common models.
+
+### 4) Dependency check
+**New runtime dependency**: `token-costs` (npm package providing daily-updated LLM pricing from Anthropic, OpenAI, Google, OpenRouter via `https://mikkotikkanen.github.io/token-costs/api/v1/`).
+
+### 5) Safety audit (MVP)
+- **Network failure**: `token-costs` fetch fails gracefully → fall back to bundled prices. Never blocks extension activation.
+- **Stale data**: Package exposes a `stale` flag; we log it but continue (prices rarely change daily).
+- **No secrets**: Pricing endpoints are public, no auth needed.
+- **Backward compatibility**: Existing `calculateCost()` signature kept for callers; new async version added alongside.
+
+### 6) Step-by-step plan
+1. **Install `token-costs`** in `packages/core`.
+2. **Create `PricingService`** in `pricing.ts`: wraps `CostClient`, initializes on first use, fetches from Anthropic + OpenAI providers, caches in-memory. Exposes `calculateCost(provider, modelId, inputTokens, outputTokens)` and `getModelPrice(provider, modelId)`. Falls back to bundled defaults if offline.
+3. **Add `codemeter.assumedModel` setting** in `package.json` with enum of common models (e.g., `claude-sonnet-4.6`, `claude-opus-4.6`, `gpt-4.1`, `gpt-4o`, etc.). Default: `claude-sonnet-4.6`.
+4. **Update `aiTracker.ts`**: Read model from `codemeter.assumedModel` setting. Derive provider from model ID prefix (`claude-*` → anthropic, `gpt-*`/`o3-*` → openai). Use `PricingService` for cost calculation.
+5. **Add "Recent Queries" to dashboard**: Pass last 20 interactions for the current project to the webview. Render a table with timestamp, type, model, input tokens, output tokens, and cost.
+6. **Verify per-project recording**: Already handled by `currentProjectKey` — no changes needed.
+
+### 7) Trade-offs
+- **Speed vs accuracy**: Live pricing fetched once per session (not per query). Near-zero latency after init. Falls back to bundled if offline.
+- **Simplicity vs flexibility**: Model is user-configured (not auto-detected from Cursor internals). Cursor doesn't expose models via VS Code LM API yet, so a setting is the reliable path.
+- **Short-term vs long-term**: When Cursor adds LM API support, we can auto-detect. Until then, the setting works reliably.
+
+### 8) Acceptance criteria
+- Cost calculation uses live pricing from `token-costs` (verified by checking non-stale data on activation).
+- `codemeter.assumedModel` setting lets users select their model; cost adjusts accordingly.
+- Dashboard shows a "Recent Queries" table with per-query: time, type, model, input tokens, output tokens, cost.
+- Costs are recorded per-project (existing behavior, verified).
+- Extension still works fully offline (falls back to bundled prices).
+
+---
+
 ## Architecture Overview
 
 ```
@@ -294,3 +340,42 @@ Key observation: this repo uses **npm workspaces**, which installs internal pack
 - **What changed**: Bundled the VS Code extension (esbuild) so packaging works with npm workspaces; dashboard now fail-soft renders even with no data; session tracking updates project activity so projects show immediately; and a best-effort initial sync runs shortly after startup when credentials exist (respecting poll interval).
 - **What you learned**: Workspaces + `vsce` packaging require bundling to avoid symlink/module-resolution issues.
 - **What’s next**: Publish the new VSIX, then validate in both VS Code and Cursor: open dashboard, edit a file (project appears), and confirm usage appears after initial sync/refresh.
+
+### 2026-03-10 (Dynamic pricing + per-query costs + bug fixes)
+- **What changed**: Replaced hardcoded stale pricing with live PricingService. Added assumedModel setting. Added Recent Queries dashboard. Fixed isPotentiallyAIGenerated bug, getModelPricing fuzzy match, and cost.ts stale prices.
+- **What I learned**: isPotentiallyAIGenerated always returned true, inflating all cost estimates.
+- **What's next**: Auto-detect model when Cursor adds VS Code LM API support.
+
+---
+
+## Enhanced Task Brief (ETB) — Build VSIX v0.1.12 and delete older VSIX artifacts
+
+### 1) User goal (1 sentence)
+Create a new VS Code extension package **VSIX version 0.1.12** locally and delete **all older `.vsix` files** from the workspace so only the latest remains.
+
+### 2) Mode
+[MVP] — packaging housekeeping; smallest safe change.
+
+### 3) Code grounding (this session)
+Files read:
+- `packages/ide-vscode/package.json` (current extension version is `0.1.11`, packaging scripts present)
+
+Current artifacts observed:
+- `packages/ide-vscode/codemeter-0.1.11.vsix` exists
+
+### 4) Proposed change (minimal)
+- Bump extension version **only** in `packages/ide-vscode/package.json` from `0.1.11` → `0.1.12`.
+- Run the existing packaging script to generate `packages/ide-vscode/codemeter-0.1.12.vsix`.
+- Delete all other `.vsix` files in the workspace (keep only the newest `0.1.12`).
+
+### 5) Trade-offs (required)
+- **Speed vs safety**: Bumping only the extension version is fastest; not bumping other packages avoids unintended scope.
+- **Simplicity vs flexibility**: Deleting old VSIX artifacts keeps the workspace clean, but removes easy rollback installers (they can be re-packaged later from git).
+- **Short-term vs long-term**: This is an artifact-management step; it doesn’t prove runtime bug-free beyond the existing local build/test signal.
+
+### 6) Acceptance criteria
+- `packages/ide-vscode/codemeter-0.1.12.vsix` exists.
+- No other `.vsix` files remain anywhere in the workspace.
+
+### 7) Approval needed
+Reply **“Approved: v0.1.12 VSIX + delete older VSIX”** and I’ll execute the above exactly.

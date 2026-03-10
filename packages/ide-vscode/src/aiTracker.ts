@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { v4 as uuidv4 } from 'uuid';
 import { AIInteractionRepository, setDatabaseDir } from '@codemeter/database';
-import { AIInteraction, estimateTokensFromChars, calculateCost, DEFAULT_MODEL, CONTEXT_ESTIMATES } from '@codemeter/core';
+import { AIInteraction, estimateTokensFromChars, calculateCost, DEFAULT_MODEL, CONTEXT_ESTIMATES, initializePricing, getPricingService } from '@codemeter/core';
 import { computeProjectIdentity } from './projectIdentity';
 import { getCurrentWorkspaceConfig, onWorkspaceConfigChange } from './workspaceConfig';
+import { ModelDetector } from './modelDetector';
 
-// Output channel for debugging
 const outputChannel = vscode.window.createOutputChannel('CodeMeter');
 
 function log(message: string): void {
@@ -13,16 +13,11 @@ function log(message: string): void {
   outputChannel.appendLine(`[${timestamp}] ${message}`);
 }
 
-/**
- * Configuration thresholds for detecting AI-generated content.
- */
 const DETECTION_CONFIG = {
-  /** Maximum time between insertions to aggregate them (ms) */
   AGGREGATION_WINDOW_MS: 500,
-  /** Debounce time before processing aggregated changes (ms) */
   DEBOUNCE_MS: 1000,
-  /** Characters per second threshold - AI is faster than humans */
-  AI_CHARS_PER_SEC_THRESHOLD: 100,
+  /** Minimum characters for an insertion to be considered AI-generated */
+  MIN_AI_CHARS: 15,
 };
 
 interface PendingChange {
@@ -38,43 +33,54 @@ interface PendingChange {
  */
 export class AIInteractionTracker implements vscode.Disposable {
   private readonly repo = new AIInteractionRepository();
+  private readonly modelDetector = new ModelDetector();
   private readonly disposables: vscode.Disposable[] = [];
-  
+
   private pendingChanges: PendingChange[] = [];
   private debounceTimer: NodeJS.Timeout | null = null;
   private lastChangeTimestamp = 0;
   private lastTypingTimestamp = 0;
   private recentTypingChars = 0;
-  
+
   private currentProjectKey: string | null = null;
 
   start(): void {
     this.updateProjectKey();
     this.initializeWorkspaceConfig();
-    log(`AIInteractionTracker started. Project key: ${this.currentProjectKey}`);
-    outputChannel.show(true); // Show the output channel
+
+    // Fire-and-forget: fetch live pricing on startup
+    initializePricing().then(() => {
+      const svc = getPricingService();
+      if (svc.isLive) {
+        log(`Live pricing loaded (date: ${svc.pricingDate})`);
+      } else {
+        log(`Using bundled fallback pricing${svc.initError ? ': ' + svc.initError : ''}`);
+      }
+    }).catch((err) => { log(`Pricing init failed: ${err?.message ?? err}`); });
+
+    const detected = this.modelDetector.detect();
+    log(
+      `AIInteractionTracker started. Project key: ${this.currentProjectKey}, ` +
+      `assumedModel: ${this.getAssumedModel()}, detectedModel: ${detected.normalizedModel ?? 'none'}, editor: ${detected.editor}`
+    );
+    outputChannel.show(true);
 
     this.disposables.push(
-      // Track document changes
       vscode.workspace.onDidChangeTextDocument(event => {
         this.handleDocumentChange(event);
       }),
-      
-      // Track workspace changes to update project key and database dir
+
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.updateProjectKey();
         this.initializeWorkspaceConfig();
       }),
 
-      // Track typing to estimate typing speed
       vscode.workspace.onDidChangeTextDocument(event => {
         this.trackTypingSpeed(event);
       }),
 
-      // Detect Cursor-specific AI commands (if available)
       ...this.registerAICommandListeners(),
 
-      // Listen for workspace config changes (e.g., multi-root folder added/removed)
       onWorkspaceConfigChange((config) => {
         log(`Workspace config changed: ${config.displayName} at ${config.codemeterDir}`);
         setDatabaseDir(config.codemeterDir);
@@ -90,6 +96,13 @@ export class AIInteractionTracker implements vscode.Disposable {
     this.flushPendingChanges();
     this.disposables.forEach(d => d.dispose());
     this.disposables.length = 0;
+  }
+
+  /**
+   * Read the model the user has configured (or fall back to DEFAULT_MODEL).
+   */
+  private getAssumedModel(): string {
+    return vscode.workspace.getConfiguration('codemeter').get<string>('assumedModel') || DEFAULT_MODEL;
   }
 
   private updateProjectKey(): void {
@@ -110,7 +123,6 @@ export class AIInteractionTracker implements vscode.Disposable {
   private trackTypingSpeed(event: vscode.TextDocumentChangeEvent): void {
     const now = Date.now();
     for (const change of event.contentChanges) {
-      // Only track small insertions (likely typing)
       if (change.text.length > 0 && change.text.length <= 5) {
         if (now - this.lastTypingTimestamp < 2000) {
           this.recentTypingChars += change.text.length;
@@ -120,33 +132,21 @@ export class AIInteractionTracker implements vscode.Disposable {
         this.lastTypingTimestamp = now;
       }
     }
-    // Decay typing chars over time
     if (now - this.lastTypingTimestamp > 5000) {
       this.recentTypingChars = 0;
     }
   }
 
   private handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
-    // Skip if no project context
-    if (!this.currentProjectKey) {
-      log(`Skipping change: no project key`);
-      return;
-    }
-    
-    // Skip non-file URIs (e.g., git, output)
-    if (event.document.uri.scheme !== 'file') {
-      return;
-    }
+    if (!this.currentProjectKey) return;
+    if (event.document.uri.scheme !== 'file') return;
 
     const now = Date.now();
-    
+
     for (const change of event.contentChanges) {
       const text = change.text;
       const lineCount = text.split('\n').length;
-      
-      log(`Document change detected: ${text.length} chars, ${lineCount} lines in ${event.document.fileName}`);
-      
-      // Check if this looks like AI-generated content
+
       if (this.isPotentiallyAIGenerated(text, lineCount, now)) {
         this.pendingChanges.push({
           documentUri: event.document.uri.toString(),
@@ -156,57 +156,59 @@ export class AIInteractionTracker implements vscode.Disposable {
         });
       }
     }
-    
+
     this.lastChangeTimestamp = now;
     this.scheduleFlush();
   }
 
+  /**
+   * Heuristic check for AI-generated content.
+   *
+   * Three positive signals (any one is enough):
+   *   1. Large multi-line insertion that appears all at once (>100 chars, >=3 lines)
+   *   2. Text contains common code-structure patterns AND is at least MIN_AI_CHARS long
+   *   3. Medium-sized insertion (>= MIN_AI_CHARS) that isn't simple whitespace
+   *
+   * One negative filter applied first:
+   *   - If the user was actively typing (small keystrokes) in the last second, skip.
+   */
   private isPotentiallyAIGenerated(text: string, lineCount: number, now: number): boolean {
     const charCount = text.length;
-    
-    // Skip empty text
-    if (charCount === 0) {
-      return false;
-    }
-    
-    // Check insertion speed
+    if (charCount === 0) return false;
+
+    // Reject if user was recently typing manually
     const timeSinceLastTyping = now - this.lastTypingTimestamp;
     if (timeSinceLastTyping < 1000 && this.recentTypingChars > 10) {
-      // User was recently typing manually - probably not AI
-      log(`  → Rejected: recent typing detected (${this.recentTypingChars} chars)`);
       return false;
     }
-    
-    // Large multi-line insertions that appear instantly are likely AI
-    // (human typing would have many intermediate changes)
-    const isInstantLargeInsertion = charCount > 100 && lineCount >= 3;
-    
-    // Code patterns that suggest AI generation
-    const hasCodePatterns = this.hasCodePatterns(text);
-    
-    // Allow tracking of any AI-generated content, even small batches
-    // This enables proper cost calculation for AI responses sent in multiple chunks
-    const result = isInstantLargeInsertion || hasCodePatterns || charCount > 0;
-    log(`  → Detection result: ${result} (chars=${charCount}, lines=${lineCount}, patterns=${hasCodePatterns})`);
-    return result;
+
+    // Large multi-line insertions that appear instantly are almost certainly AI
+    if (charCount > 100 && lineCount >= 3) return true;
+
+    // Code-structure patterns with a minimum size guard
+    if (charCount >= DETECTION_CONFIG.MIN_AI_CHARS && this.hasCodePatterns(text)) return true;
+
+    // Moderate-size insertions that aren't just whitespace/newlines
+    if (charCount >= 50 && text.trim().length > 10) return true;
+
+    return false;
   }
 
   private hasCodePatterns(text: string): boolean {
-    // Common patterns in AI-generated code
     const patterns = [
-      /function\s+\w+/,           // function declarations
-      /const\s+\w+\s*=/,          // const declarations
-      /export\s+(default\s+)?/,   // exports
-      /import\s+.*from/,          // imports
-      /class\s+\w+/,              // class declarations
-      /async\s+function/,         // async functions
-      /=>\s*\{/,                  // arrow functions
-      /interface\s+\w+/,          // TypeScript interfaces
-      /type\s+\w+\s*=/,           // TypeScript type aliases
-      /def\s+\w+\(/,              // Python functions
-      /class\s+\w+:/,             // Python classes
+      /function\s+\w+/,
+      /const\s+\w+\s*=/,
+      /export\s+(default\s+)?/,
+      /import\s+.*from/,
+      /class\s+\w+/,
+      /async\s+function/,
+      /=>\s*\{/,
+      /interface\s+\w+/,
+      /type\s+\w+\s*=/,
+      /def\s+\w+\(/,
+      /class\s+\w+:/,
     ];
-    
+
     return patterns.some(p => p.test(text));
   }
 
@@ -225,7 +227,6 @@ export class AIInteractionTracker implements vscode.Disposable {
 
     log(`Flushing ${this.pendingChanges.length} pending changes for project ${this.currentProjectKey}`);
 
-    // Aggregate nearby changes (they might be parts of one AI response)
     const aggregated = this.aggregateChanges(this.pendingChanges);
     this.pendingChanges = [];
 
@@ -234,10 +235,12 @@ export class AIInteractionTracker implements vscode.Disposable {
       if (interaction) {
         try {
           this.repo.create(interaction);
-          log(`✅ Saved AI interaction: ${interaction.type}, $${(interaction.estimatedCostCents / 100).toFixed(4)}`);
+          log(`Saved AI interaction: ${interaction.type}, assumed=${interaction.assumedModel}, ` +
+              `detected=${interaction.detectedModel ?? 'none'}, editor=${interaction.editor ?? 'unknown'}, ` +
+              `in=${interaction.estimatedInputTokens} out=${interaction.estimatedOutputTokens} ` +
+              `$${(interaction.estimatedCostCents / 100).toFixed(4)}`);
         } catch (e) {
-          // best-effort, don't crash
-          log(`❌ Failed to save AI interaction: ${e}`);
+          log(`Failed to save AI interaction: ${e}`);
           console.error('[CodeMeter] Failed to save AI interaction:', e);
         }
       }
@@ -246,34 +249,26 @@ export class AIInteractionTracker implements vscode.Disposable {
 
   private aggregateChanges(changes: PendingChange[]): PendingChange[][] {
     if (changes.length === 0) return [];
-    
+
     const sorted = [...changes].sort((a, b) => a.timestampMs - b.timestampMs);
     const groups: PendingChange[][] = [[sorted[0]]];
-    
+
     for (let i = 1; i < sorted.length; i++) {
       const current = sorted[i];
       const lastGroup = groups[groups.length - 1];
       const lastChange = lastGroup[lastGroup.length - 1];
-      
-      // Edge case: very close timestamps (within aggregation window)
-      // typically indicates batched AI output
+
       if (current.timestampMs - lastChange.timestampMs < DETECTION_CONFIG.AGGREGATION_WINDOW_MS) {
         lastGroup.push(current);
       } else {
-        // New interaction group
         groups.push([current]);
       }
     }
-    
-    // Filter out very small groups that might be noise
-    // (less than 10 chars total is likely not meaningful AI interaction)
+
+    // Filter out tiny groups that are likely noise (below the minimum AI threshold)
     return groups.filter(group => {
       const totalChars = group.reduce((sum, c) => sum + c.insertedText.length, 0);
-      if (totalChars < 1) {
-        log(`  → Filtered out empty group`);
-        return false;
-      }
-      return true;
+      return totalChars >= DETECTION_CONFIG.MIN_AI_CHARS;
     });
   }
 
@@ -281,29 +276,18 @@ export class AIInteractionTracker implements vscode.Disposable {
     if (changes.length === 0) return null;
 
     const totalChars = changes.reduce((sum, c) => sum + c.insertedText.length, 0);
-    const totalLines = changes.reduce((sum, c) => sum + c.lineCount, 0);
     const firstTimestamp = changes[0].timestampMs;
 
-    // Edge case: empty after aggregation (shouldn't happen, but defensive)
-    if (totalChars === 0) {
-      log(`  → Skipped: aggregated group has 0 chars`);
-      return null;
-    }
+    if (totalChars === 0) return null;
 
-    // Determine interaction type based on size and patterns
     const type = this.inferInteractionType(changes);
+    const assumedModel = this.getAssumedModel();
+    const detected = this.modelDetector.detect();
+    const model = detected.normalizedModel ?? assumedModel;
 
-    // Estimate tokens
-    // Output tokens: direct from observed insertion
     const outputTokens = estimateTokensFromChars(totalChars, true);
-    
-    // Input tokens: estimated based on interaction type and context
     const inputTokens = this.estimateInputTokens(type, totalChars);
-
-    // Calculate estimated cost (model-dependent)
-    const estimatedCost = calculateCost(inputTokens, outputTokens, DEFAULT_MODEL);
-
-    log(`  ✓ Interaction created: ${type}, ${totalChars} chars, ${outputTokens} output tokens, $${(estimatedCost / 100).toFixed(4)}`);
+    const estimatedCost = calculateCost(inputTokens, outputTokens, model);
 
     return {
       id: uuidv4(),
@@ -314,7 +298,9 @@ export class AIInteractionTracker implements vscode.Disposable {
       estimatedOutputTokens: outputTokens,
       estimatedCostCents: estimatedCost,
       charCount: totalChars,
-      assumedModel: DEFAULT_MODEL,
+      assumedModel,
+      detectedModel: detected.normalizedModel ?? undefined,
+      editor: detected.editor,
     };
   }
 
@@ -324,44 +310,17 @@ export class AIInteractionTracker implements vscode.Disposable {
     const combinedText = changes.map(c => c.insertedText).join('\n');
     const hasPatterns = this.hasCodePatterns(combinedText);
 
-    // CHAT: Large responses, typically multi-line or multi-file
-    // - Often from /explain, /fix, /implement commands
-    // - Can have mixed output (code + comments + explanations)
-    if (totalChars > 1000 || totalLines > 30) {
-      return 'chat';
-    }
+    if (totalChars > 1000 || totalLines > 30) return 'chat';
+    if (totalLines >= 5 && totalChars >= 200 && hasPatterns) return 'inline-edit';
+    if (totalChars < 500 && totalLines < 10) return 'completion';
+    if (totalChars < 200 && hasPatterns) return 'completion';
 
-    // INLINE-EDIT: Targeted code modifications
-    // - Medium-sized blocks (200-1000 chars)
-    // - Has code structure (functions, classes, etc.)
-    // - Single logical change
-    if (totalLines >= 5 && totalChars >= 200 && hasPatterns) {
-      return 'inline-edit';
-    }
-
-    // COMPLETION: Quick suggestions and auto-completions
-    // - Typically small (<500 chars)
-    // - Often a single line or function stub
-    // - May or may not have code patterns
-    if (totalChars < 500 && totalLines < 10) {
-      return 'completion';
-    }
-
-    // EDGE CASE: Very small insertions with code patterns
-    // - Likely a code snippet or partial statement
-    // - Treat as completion since it's minimal
-    if (totalChars < 200 && hasPatterns) {
-      return 'completion';
-    }
-
-    // FALLBACK: Unknown type for anything that doesn't fit above
-    // Use conservative estimate
     return 'unknown';
   }
 
   private estimateInputTokens(type: AIInteraction['type'], outputChars: number): number {
     const ctx = CONTEXT_ESTIMATES;
-    
+
     switch (type) {
       case 'chat':
         return ctx.chat.baseContextTokens + ctx.chat.fileContextTokens;
@@ -370,32 +329,12 @@ export class AIInteractionTracker implements vscode.Disposable {
       case 'inline-edit':
         return Math.round(estimateTokensFromChars(outputChars * ctx.inlineEdit.contextMultiplier) + ctx.inlineEdit.instructionTokens);
       default:
-        return 500; // Conservative default
+        return 500;
     }
   }
 
-  /**
-   * Register listeners for Cursor-specific commands if available.
-   * These provide more accurate tracking than heuristics.
-   */
   private registerAICommandListeners(): vscode.Disposable[] {
-    const disposables: vscode.Disposable[] = [];
-
-    // Try to listen for common AI command patterns
-    // Note: Cursor's internal commands may not be public
-    const aiCommands = [
-      'cursor.generateCode',
-      'cursor.chat.submit',
-      'cursor.edit.accept',
-      'cursor.acceptSuggestion',
-      'editor.action.inlineSuggest.commit',
-      'editor.action.triggerSuggest',
-    ];
-
-    // We can't directly intercept commands, but we can register our own
-    // wrapper commands or use the extension API if available
-    
-    return disposables;
+    return [];
   }
 
   /**
@@ -411,7 +350,11 @@ export class AIInteractionTracker implements vscode.Disposable {
 
     const inputTokens = estimateTokensFromChars(params.inputChars, true);
     const outputTokens = estimateTokensFromChars(params.outputChars, true);
-    const model = params.model ?? DEFAULT_MODEL;
+    const assumedModel = this.getAssumedModel();
+    const detected = this.modelDetector.detect();
+    const model = (params.model && params.model.trim())
+      ? params.model
+      : (detected.normalizedModel ?? assumedModel);
     const cost = calculateCost(inputTokens, outputTokens, model);
 
     const interaction: AIInteraction = {
@@ -423,7 +366,9 @@ export class AIInteractionTracker implements vscode.Disposable {
       estimatedOutputTokens: outputTokens,
       estimatedCostCents: cost,
       charCount: params.outputChars,
-      assumedModel: model,
+      assumedModel,
+      detectedModel: detected.normalizedModel ?? undefined,
+      editor: detected.editor,
     };
 
     try {
@@ -433,11 +378,8 @@ export class AIInteractionTracker implements vscode.Disposable {
     }
   }
 
-  /**
-   * Get cost summary for current workspace.
-   */
-  getCostSummary(periodDays: number = 30): { 
-    totalCents: number; 
+  getCostSummary(periodDays: number = 30): {
+    totalCents: number;
     interactions: number;
     breakdown: Record<string, { count: number; cents: number }>;
   } | null {
@@ -445,7 +387,7 @@ export class AIInteractionTracker implements vscode.Disposable {
 
     const now = Date.now();
     const startMs = now - (periodDays * 24 * 60 * 60 * 1000);
-    
+
     try {
       const summary = this.repo.getEstimatedCostSummary(this.currentProjectKey, startMs, now);
       return {
@@ -463,6 +405,3 @@ export class AIInteractionTracker implements vscode.Disposable {
     }
   }
 }
-
-
-
