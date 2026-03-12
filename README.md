@@ -28,5 +28,6 @@ CodeMeter gives you fast, local-first insight into how much AI assistance costs 
 ### Feedback & Contribution
 - Issues and PRs: https://github.com/bhav09/codemeter
 
-### Contributor
+### Contributors
+- Bhavishya Pandit ([LinkedIn](https://www.linkedin.com/in/bhavishya-pandit/) / [Github](https://github.com/bhav09))
 - Aakriti Aggarwal ([LinkedIn](https://www.linkedin.com/in/aakritiaggarwal13/) / [Github](https://github.com/aakriti1318))
