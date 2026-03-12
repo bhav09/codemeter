@@ -23,6 +23,11 @@ export class ModelDetector {
   private cached: DetectedModelInfo | null = null;
   private cachedAtMs = 0;
 
+  invalidateCache(): void {
+    this.cached = null;
+    this.cachedAtMs = 0;
+  }
+
   detect(): DetectedModelInfo {
     const now = Date.now();
     if (this.cached && (now - this.cachedAtMs) < CACHE_TTL_MS) {

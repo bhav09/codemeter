@@ -164,6 +164,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           outputTokens: i.estimatedOutputTokens,
           costCents: i.estimatedCostCents,
           charCount: i.charCount,
+          totalTokens: (i.estimatedInputTokens || 0) + (i.estimatedOutputTokens || 0),
         }));
       }
 
@@ -624,6 +625,24 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           <span id="breakdownUnknown" class="breakdown-value">$0.00</span>
         </div>
       </div>
+      <div id="modelTokenSummary" class="estimated-note" style="font-style: normal; margin-top: 10px; padding: 8px; background: rgba(245,158,11,0.08); border-radius: 4px;">
+        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+          <span style="color: var(--vscode-descriptionForeground);">Model:</span>
+          <span id="summaryModel" style="font-weight: 600; color: var(--vscode-foreground);">—</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+          <span style="color: var(--vscode-descriptionForeground);">Editor:</span>
+          <span id="summaryEditor" style="font-weight: 600; color: var(--vscode-foreground);">—</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+          <span style="color: var(--vscode-descriptionForeground);">Total Input Tokens (week):</span>
+          <span id="summaryInputTokens" style="font-weight: 600; color: var(--vscode-foreground);">0</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px;">
+          <span style="color: var(--vscode-descriptionForeground);">Total Output Tokens (week):</span>
+          <span id="summaryOutputTokens" style="font-weight: 600; color: var(--vscode-foreground);">0</span>
+        </div>
+      </div>
       <div class="estimated-note">
         Estimates based on detected AI interactions. Actual costs may vary.
       </div>
@@ -800,7 +819,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           }).join('');
         }
 
-        function renderEstimated(est) {
+        function renderEstimated(est, pricing) {
           if (!est) return;
           
           // Today
@@ -820,12 +839,22 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             $('breakdownCompletion').textContent = fmtMoney((b.completion && b.completion.cents) || 0);
             $('breakdownInline').textContent = fmtMoney((b.inlineEdit && b.inlineEdit.cents) || 0);
             $('breakdownUnknown').textContent = fmtMoney((b.unknown && b.unknown.cents) || 0);
+
+            // Model & token summary
+            $('summaryInputTokens').textContent = fmtTokens(est.week.totalInputTokens || 0);
+            $('summaryOutputTokens').textContent = fmtTokens(est.week.totalOutputTokens || 0);
           }
           
           // Month
           if (est.month) {
             $('estMonth').textContent = fmtMoney(est.month.totalEstimatedCents || 0);
             $('estMonthCount').textContent = (est.month.interactionCount || 0) + ' interactions';
+          }
+
+          // Model / editor summary from pricing or latest interaction
+          if (pricing) {
+            $('summaryModel').textContent = pricing.detectedModel || pricing.assumedModel || '—';
+            $('summaryEditor').textContent = pricing.editor || '—';
           }
         }
 
@@ -891,7 +920,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
           renderPricingStatus(msg.pricing);
 
           // Estimated costs (local tracking)
-          renderEstimated(msg.estimated);
+          renderEstimated(msg.estimated, msg.pricing);
 
           // Recent individual queries
           renderRecentQueries(msg.recentInteractions);

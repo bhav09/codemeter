@@ -8,6 +8,7 @@ import { checkBudgetsAndNotify, setBudgetForCurrentProject } from './budgets';
 import { reviewAttribution } from './reviewAttribution';
 import { DashboardViewProvider } from './dashboardView';
 import { MaintenanceRepository, SyncStateRepository } from '@codemeter/database';
+import { ensureGitignoreForAllWorkspaces, registerGitignoreWatcher } from './gitignoreManager';
 
 let tracker: ProjectSessionTracker | null = null;
 let aiTracker: AIInteractionTracker | null = null;
@@ -101,6 +102,10 @@ export async function activate(context: vscode.ExtensionContext) {
     console.error('CodeMeter: Failed to register dashboard view provider:', error);
     throw error;
   }
+
+  // Ensure .codemeter/ is in .gitignore for all workspace folders
+  ensureGitignoreForAllWorkspaces();
+  context.subscriptions.push(registerGitignoreWatcher());
 
   // Start session tracking - this creates the project entry for the current workspace
   const enabled = vscode.workspace.getConfiguration('codemeter').get<boolean>('enableTracking', true);

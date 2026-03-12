@@ -227,6 +227,9 @@ export class AIInteractionTracker implements vscode.Disposable {
 
     log(`Flushing ${this.pendingChanges.length} pending changes for project ${this.currentProjectKey}`);
 
+    // Force a fresh model detection on every flush so we pick up model switches promptly
+    this.modelDetector.invalidateCache();
+
     const aggregated = this.aggregateChanges(this.pendingChanges);
     this.pendingChanges = [];
 
@@ -235,10 +238,10 @@ export class AIInteractionTracker implements vscode.Disposable {
       if (interaction) {
         try {
           this.repo.create(interaction);
-          log(`Saved AI interaction: ${interaction.type}, assumed=${interaction.assumedModel}, ` +
-              `detected=${interaction.detectedModel ?? 'none'}, editor=${interaction.editor ?? 'unknown'}, ` +
-              `in=${interaction.estimatedInputTokens} out=${interaction.estimatedOutputTokens} ` +
-              `$${(interaction.estimatedCostCents / 100).toFixed(4)}`);
+          log(`Saved AI interaction: type=${interaction.type}, model=${interaction.detectedModel ?? interaction.assumedModel}, ` +
+              `editor=${interaction.editor ?? 'unknown'}, ` +
+              `chars=${interaction.charCount}, inputTokens=${interaction.estimatedInputTokens}, outputTokens=${interaction.estimatedOutputTokens}, ` +
+              `cost=$${(interaction.estimatedCostCents / 100).toFixed(4)}`);
         } catch (e) {
           log(`Failed to save AI interaction: ${e}`);
           console.error('[CodeMeter] Failed to save AI interaction:', e);
@@ -278,16 +281,21 @@ export class AIInteractionTracker implements vscode.Disposable {
     const totalChars = changes.reduce((sum, c) => sum + c.insertedText.length, 0);
     const firstTimestamp = changes[0].timestampMs;
 
-    if (totalChars === 0) return null;
+    if (totalChars <= 0) return null;
 
     const type = this.inferInteractionType(changes);
     const assumedModel = this.getAssumedModel();
     const detected = this.modelDetector.detect();
     const model = detected.normalizedModel ?? assumedModel;
 
-    const outputTokens = estimateTokensFromChars(totalChars, true);
-    const inputTokens = this.estimateInputTokens(type, totalChars);
+    const outputTokens = Math.max(1, estimateTokensFromChars(totalChars, true));
+    const inputTokens = Math.max(1, this.estimateInputTokens(type, totalChars));
     const estimatedCost = calculateCost(inputTokens, outputTokens, model);
+
+    if (!Number.isFinite(estimatedCost) || estimatedCost < 0) {
+      log(`Skipping interaction with invalid cost: ${estimatedCost} (model=${model}, in=${inputTokens}, out=${outputTokens})`);
+      return null;
+    }
 
     return {
       id: uuidv4(),

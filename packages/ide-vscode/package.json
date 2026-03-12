@@ -2,7 +2,7 @@
   "name": "codemeter",
   "displayName": "CodeMeter - AI Coding Cost Tracker",
   "description": "Track AI coding agent usage and costs across projects and IDEs",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "publisher": "BhavishyaPandit9",
   "repository": {
     "type": "git",
@@ -67,8 +67,7 @@
       {
         "command": "codemeter.reviewAttribution",
         "title": "CodeMeter: Review Unattributed / Low-Confidence Events"
-      }
-      ,
+      },
       {
         "command": "codemeter.showStoragePath",
         "title": "CodeMeter: Show Storage Path"
@@ -100,8 +99,7 @@
           "type": "boolean",
           "default": true,
           "description": "Enable budget alerts/notifications"
-        }
-        ,
+        },
         "codemeter.assumedModel": {
           "type": "string",
           "default": "claude-sonnet-4.6",
@@ -154,7 +152,7 @@
   "scripts": {
     "bundle": "node ./scripts/bundle.mjs",
     "build": "npm run bundle && npm run package",
-    "package": "vsce package --no-dependencies",
+    "package": "npx @vscode/vsce package --no-dependencies",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -172,6 +170,7 @@
     "@types/node": "^20.0.0",
     "@types/uuid": "^9.0.0",
     "@types/vscode": "^1.74.0",
+    "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.20.2",
     "typescript": "^5.0.0",
     "vsce": "^2.15.0"
